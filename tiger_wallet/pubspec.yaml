@@ -1,0 +1,41 @@
+name: tiger_wallet
+description: "Tiger Wallet — a gamified budgeting app with an AI 'strict Asian parent' accountability partner."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # --- Backend / Auth / DB ---
+  supabase_flutter: ^2.5.6      # Supabase auth + Postgres + Realtime client
+
+  # --- Config / Secrets ---
+  flutter_dotenv: ^5.1.0        # Loads .env at runtime so keys never get hardcoded
+
+  # --- Networking (Groq API) ---
+  http: ^1.2.1
+
+  # --- State management ---
+  provider: ^6.1.2
+
+  # --- UI polish ---
+  intl: ^0.19.0                 # Currency / date formatting
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Register the .env file and avatar assets. Add real PNG/SVG avatar files
+  # under assets/avatars/ (see README section in main.dart header comment).
+  assets:
+    - .env
+    - assets/avatars/
