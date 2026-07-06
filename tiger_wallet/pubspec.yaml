@@ -1,5 +1,5 @@
-name: tiger_wallet
-description: "Tiger Wallet — a gamified budgeting app with an AI 'strict Asian parent' accountability partner."
+name: CensorCents
+description: "CensorCents — a gamified budgeting app with an AI 'strict Asian parent' accountability partner."
 publish_to: "none"
 version: 1.0.0+1
 
@@ -11,10 +11,10 @@ dependencies:
     sdk: flutter
 
   # --- Backend / Auth / DB ---
-  supabase_flutter: ^2.5.6      # Supabase auth + Postgres + Realtime client
+  supabase_flutter: ^2.5.6
 
   # --- Config / Secrets ---
-  flutter_dotenv: ^5.1.0        # Loads .env at runtime so keys never get hardcoded
+  flutter_dotenv: ^6.0.1
 
   # --- Networking (Groq API) ---
   http: ^1.2.1
@@ -23,19 +23,26 @@ dependencies:
   provider: ^6.1.2
 
   # --- UI polish ---
-  intl: ^0.19.0                 # Currency / date formatting
+  intl: ^0.20.3
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
 
 flutter:
   uses-material-design: true
 
-  # Register the .env file and avatar assets. Add real PNG/SVG avatar files
-  # under assets/avatars/ (see README section in main.dart header comment).
   assets:
     - .env
     - assets/avatars/
+    - assets/icon/

@@ -48,7 +48,7 @@ class TigerWalletApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => WalletController(),
       child: MaterialApp(
-        title: 'Tiger Wallet',
+        title: 'CensorCent',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         darkTheme: AppTheme.darkTheme,
