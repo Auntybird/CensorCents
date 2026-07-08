@@ -7,7 +7,9 @@ import '../services/wallet_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_transaction_sheet.dart';
 import '../widgets/ai_feedback_sheet.dart';
+import '../widgets/edit_budget_sheet.dart';
 import '../widgets/stern_avatar.dart';
+import 'analytics_screen.dart';
 
 /// The primary screen: stern avatar, budget progress, "Add Transaction"
 /// button, and a scrollable history where each card shows the AI's
@@ -45,6 +47,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
       amount: amount,
       category: category,
       type: type,
+    );
+  }
+
+  Future<void> _openEditBudgetSheet() async {
+    final controller = context.read<WalletController>();
+    final profile = controller.profile;
+    if (profile == null) return;
+
+    final result = await EditBudgetSheet.show(
+      context,
+      currentThreshold: profile.budgetThreshold,
+      currentPersonality: profile.parentPersonality,
+    );
+    if (result == null) return;
+
+    final (threshold, personality) = result;
+    await controller.updateBudget(
+      budgetThreshold: threshold,
+      parentPersonality: personality,
     );
   }
 
@@ -93,6 +114,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           appBar: AppBar(
             title: const Text('CensorCents'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.bar_chart_rounded),
+                tooltip: 'Analytics',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AnalyticsScreen()),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.logout),
                 tooltip: 'Sign out',
@@ -143,9 +171,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _BudgetSummaryCard(
                   monthlyTotal: controller.monthlyTotal,
                   monthlyIncome: controller.monthlyIncome,
+                  balance: controller.monthlyBalance,
                   threshold: controller.profile?.budgetThreshold ?? 0,
                   progress: controller.budgetProgress,
                   currency: _currency,
+                  onEdit: _openEditBudgetSheet,
                 ),
                 const SizedBox(height: 24),
                 Text('Recent Transactions', style: Theme.of(context).textTheme.headlineMedium),
@@ -185,26 +215,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-/// Card showing spend-vs-threshold with a color-coded progress bar.
+/// Card showing spend-vs-threshold with a color-coded progress bar, plus an
+/// income/expense/balance breakdown and a tap target to edit the budget.
 class _BudgetSummaryCard extends StatelessWidget {
   final double monthlyTotal;
   final double monthlyIncome;
+  final double balance;
   final double threshold;
   final double progress; // 0.0 - 2.0, clamped
   final NumberFormat currency;
+  final VoidCallback onEdit;
 
   const _BudgetSummaryCard({
     required this.monthlyTotal,
     required this.monthlyIncome,
+    required this.balance,
     required this.threshold,
     required this.progress,
     required this.currency,
+    required this.onEdit,
   });
 
   @override
   Widget build(BuildContext context) {
     final isOver = monthlyTotal > threshold;
     final accent = isOver ? AppColors.overspendRed : AppColors.savingsGreen;
+    final balanceColor = balance >= 0 ? AppColors.savingsGreen : AppColors.overspendRed;
 
     return Card(
       child: Padding(
@@ -216,9 +252,22 @@ class _BudgetSummaryCard extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('This Month', style: TextStyle(color: AppColors.textSecondary)),
-                Text(
-                  isOver ? 'OVER BUDGET' : 'ON TRACK',
-                  style: TextStyle(color: accent, fontWeight: FontWeight.bold, fontSize: 12),
+                Row(
+                  children: [
+                    Text(
+                      isOver ? 'OVER BUDGET' : 'ON TRACK',
+                      style: TextStyle(color: accent, fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: onEdit,
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(Icons.edit_outlined, size: 16, color: AppColors.textSecondary),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -266,6 +315,25 @@ class _BudgetSummaryCard extends StatelessWidget {
                   ],
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+              decoration: BoxDecoration(
+                color: balanceColor.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Balance', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                  Text(
+                    '${balance >= 0 ? '+' : '-'}${currency.format(balance.abs())}',
+                    style: TextStyle(color: balanceColor, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

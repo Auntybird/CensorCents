@@ -35,6 +35,78 @@ class WalletController extends ChangeNotifier {
     return (monthlyTotal / profile!.budgetThreshold).clamp(0.0, 2.0);
   }
 
+  /// Income minus expenses for the current calendar month. Positive means
+  /// the user is in the black this month, negative means they spent more
+  /// than they brought in.
+  double get monthlyBalance => monthlyIncome - monthlyTotal;
+
+  /// Sum of expense amounts this month, grouped by category — feeds the
+  /// analytics breakdown chart. Sorted descending so the biggest spend
+  /// category comes first.
+  Map<String, double> get expenseByCategoryThisMonth {
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    final totals = <String, double>{};
+
+    for (final tx in transactions) {
+      if (tx.isExpense && !tx.timestamp.isBefore(monthStart)) {
+        totals[tx.category] = (totals[tx.category] ?? 0) + tx.amount;
+      }
+    }
+
+    final sorted = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return {for (final e in sorted) e.key: e.value};
+  }
+
+  /// Net (income - expense) for each of the last [days] calendar days,
+  /// oldest first — feeds the trend line chart. Days with no activity show
+  /// up as 0 so the chart has a continuous x-axis.
+  List<MapEntry<DateTime, double>> dailyNetTrend({int days = 14}) {
+    final today = DateTime.now();
+    final startDay = DateTime(today.year, today.month, today.day)
+        .subtract(Duration(days: days - 1));
+
+    final totals = <DateTime, double>{
+      for (int i = 0; i < days; i++) startDay.add(Duration(days: i)): 0.0,
+    };
+
+    for (final tx in transactions) {
+      final day = DateTime(tx.timestamp.year, tx.timestamp.month, tx.timestamp.day);
+      if (day.isBefore(startDay)) continue;
+      final delta = tx.isIncome ? tx.amount : -tx.amount;
+      totals[day] = (totals[day] ?? 0) + delta;
+    }
+
+    final entries = totals.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    return entries;
+  }
+
+  bool isUpdatingBudget = false;
+
+  /// Lets the user edit their own budget ceiling / persona from settings.
+  /// Refreshes [profile] (and the derived budget getters) on success.
+  Future<void> updateBudget({
+    double? budgetThreshold,
+    String? parentPersonality,
+  }) async {
+    isUpdatingBudget = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _db.updateUserProfile(
+        budgetThreshold: budgetThreshold,
+        parentPersonality: parentPersonality,
+      );
+      profile = await _db.fetchUserProfile();
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isUpdatingBudget = false;
+      notifyListeners();
+    }
+  }
+
   /// Loads the profile + transaction history and opens the realtime feed.
   Future<void> initialize() async {
     isLoading = true;

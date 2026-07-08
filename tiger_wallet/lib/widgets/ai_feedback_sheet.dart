@@ -143,7 +143,7 @@ class AiFeedbackSheet extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Yes, Mother'),
+                child: const Text('Yes Boss'),
               ),
             ),
           ],

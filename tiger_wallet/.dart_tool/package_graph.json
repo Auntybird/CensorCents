@@ -16,6 +16,7 @@
         "supabase_flutter"
       ],
       "devDependencies": [
+        "fl_chart",
         "flutter_launcher_icons",
         "flutter_lints",
         "flutter_test"
@@ -827,6 +828,22 @@
       "version": "3.1.2",
       "dependencies": [
         "typed_data"
+      ]
+    },
+    {
+      "name": "fl_chart",
+      "version": "0.69.2",
+      "dependencies": [
+        "equatable",
+        "flutter"
+      ]
+    },
+    {
+      "name": "equatable",
+      "version": "2.1.0",
+      "dependencies": [
+        "collection",
+        "meta"
       ]
     }
   ],
