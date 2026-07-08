@@ -89,9 +89,21 @@ class SupabaseService {
         .toList();
   }
 
-  /// Sum of all transaction amounts within the current calendar month.
+  /// Sum of EXPENSE transaction amounts within the current calendar month.
   /// Used to decide whether the user is over/under their budget_threshold.
+  /// Income rows are intentionally excluded — they shouldn't make the AI
+  /// think the user has "spent" more.
   Future<double> fetchCurrentMonthTotal() async {
+    return _sumCurrentMonth(TransactionType.expense);
+  }
+
+  /// Sum of INCOME transaction amounts within the current calendar month.
+  /// Handy for a "money in vs money out" summary on the dashboard.
+  Future<double> fetchCurrentMonthIncome() async {
+    return _sumCurrentMonth(TransactionType.income);
+  }
+
+  Future<double> _sumCurrentMonth(TransactionType type) async {
     final uid = currentUser?.id;
     if (uid == null) throw StateError('No authenticated user.');
 
@@ -102,6 +114,7 @@ class SupabaseService {
         .from('transactions')
         .select('amount')
         .eq('user_id', uid)
+        .eq('type', type.value)
         .gte('timestamp', monthStart.toIso8601String());
 
     double total = 0;
@@ -117,6 +130,7 @@ class SupabaseService {
   Future<TransactionModel> insertTransaction({
     required double amount,
     required String category,
+    TransactionType type = TransactionType.expense,
   }) async {
     final uid = currentUser?.id;
     if (uid == null) throw StateError('No authenticated user.');
@@ -127,6 +141,7 @@ class SupabaseService {
       amount: amount,
       category: category,
       timestamp: DateTime.now(),
+      type: type,
     );
 
     final inserted = await _client

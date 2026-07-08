@@ -70,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Icon(Icons.shield_moon_rounded, size: 72, color: AppColors.savingsGreen),
                   const SizedBox(height: 12),
                   Text(
-                    'Tiger Wallet',
+                    'CensorCents',
                     textAlign: TextAlign.center,
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontSize: 32),
                   ),

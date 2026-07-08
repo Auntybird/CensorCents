@@ -76,7 +76,7 @@ class SternAvatar extends StatelessWidget {
             border: Border.all(color: _ringColor, width: 4),
             boxShadow: [
               BoxShadow(
-                color: _ringColor.withOpacity(0.4),
+                color: _ringColor.withValues(alpha: 0.4),
                 blurRadius: 24,
                 spreadRadius: 2,
               ),

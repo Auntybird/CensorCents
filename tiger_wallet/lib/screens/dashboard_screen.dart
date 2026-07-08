@@ -40,8 +40,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final result = await AddTransactionSheet.show(context);
     if (result == null) return;
 
-    final (amount, category) = result;
-    await controller.submitTransaction(amount: amount, category: category);
+    final (amount, category, type) = result;
+    await controller.submitTransaction(
+      amount: amount,
+      category: category,
+      type: type,
+    );
   }
 
   /// Watches for any transaction whose ai_feedback just arrived and hasn't
@@ -63,6 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             isOverBudget: isOver,
             category: tx.category,
             amount: tx.amount,
+            type: tx.type,
           );
         });
         break; // show one at a time
@@ -86,7 +91,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Tiger Wallet'),
+            title: const Text('CensorCents'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.logout),
@@ -103,8 +108,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
               children: [
                 Center(child: SternAvatar(mood: mood)),
                 const SizedBox(height: 24),
+                // ==========================================
+                // AI engine failure banner
+                // ==========================================
+                if (controller.errorMessage != null) ...[
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 24),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppColors.overspendRed.withOpacity(0.1),
+                      border: Border.all(color: AppColors.overspendRed, width: 1.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: AppColors.overspendRed),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'AI ENGINE FAILURE:\n${controller.errorMessage}',
+                            style: const TextStyle(
+                              color: AppColors.overspendRed,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                // ==========================================
                 _BudgetSummaryCard(
                   monthlyTotal: controller.monthlyTotal,
+                  monthlyIncome: controller.monthlyIncome,
                   threshold: controller.profile?.budgetThreshold ?? 0,
                   progress: controller.budgetProgress,
                   currency: _currency,
@@ -150,12 +188,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 /// Card showing spend-vs-threshold with a color-coded progress bar.
 class _BudgetSummaryCard extends StatelessWidget {
   final double monthlyTotal;
+  final double monthlyIncome;
   final double threshold;
   final double progress; // 0.0 - 2.0, clamped
   final NumberFormat currency;
 
   const _BudgetSummaryCard({
     required this.monthlyTotal,
+    required this.monthlyIncome,
     required this.threshold,
     required this.progress,
     required this.currency,
@@ -201,6 +241,32 @@ class _BudgetSummaryCard extends StatelessWidget {
                 valueColor: AlwaysStoppedAnimation(accent),
               ),
             ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.arrow_downward, size: 14, color: AppColors.savingsGreen),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Income: ${currency.format(monthlyIncome)}',
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.arrow_upward, size: 14, color: AppColors.overspendRed),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Spent: ${currency.format(monthlyTotal)}',
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -218,6 +284,10 @@ class _TransactionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasFeedback = transaction.aiFeedback != null;
+    final isIncome = transaction.isIncome;
+    final amountColor = isIncome ? AppColors.savingsGreen : AppColors.textPrimary;
+    final signedAmount =
+        '${isIncome ? '+' : '-'}${currency.format(transaction.amount)}';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -232,9 +302,17 @@ class _TransactionTile extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      transaction.category,
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                    Row(
+                      children: [
+                        if (isIncome) ...[
+                          const Icon(Icons.arrow_downward, size: 14, color: AppColors.savingsGreen),
+                          const SizedBox(width: 4),
+                        ],
+                        Text(
+                          transaction.category,
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        ),
+                      ],
                     ),
                     Text(
                       DateFormat.yMMMd().add_jm().format(transaction.timestamp),
@@ -243,8 +321,8 @@ class _TransactionTile extends StatelessWidget {
                   ],
                 ),
                 Text(
-                  currency.format(transaction.amount),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.textPrimary),
+                  signedAmount,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: amountColor),
                 ),
               ],
             ),

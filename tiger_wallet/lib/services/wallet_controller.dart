@@ -19,7 +19,8 @@ class WalletController extends ChangeNotifier {
 
   UserProfile? profile;
   List<TransactionModel> transactions = [];
-  double monthlyTotal = 0;
+  double monthlyTotal = 0; // expenses only
+  double monthlyIncome = 0;
   bool isLoading = false;
   bool isSubmitting = false;
   String? errorMessage;
@@ -42,6 +43,7 @@ class WalletController extends ChangeNotifier {
       profile = await _db.fetchUserProfile();
       transactions = await _db.fetchTransactions();
       monthlyTotal = await _db.fetchCurrentMonthTotal();
+      monthlyIncome = await _db.fetchCurrentMonthIncome();
 
       // Realtime: whenever ANY row changes (insert or the later ai_feedback
       // update), refresh the in-memory list so the UI updates automatically.
@@ -62,6 +64,7 @@ class WalletController extends ChangeNotifier {
   Future<void> submitTransaction({
     required double amount,
     required String category,
+    TransactionType type = TransactionType.expense,
   }) async {
     if (profile == null) return;
     isSubmitting = true;
@@ -74,10 +77,14 @@ class WalletController extends ChangeNotifier {
       final inserted = await _db.insertTransaction(
         amount: amount,
         category: category,
+        type: type,
       );
 
-      // STEP 3a: recompute the running monthly total including this spend.
+      // STEP 3a: recompute the running monthly totals including this entry.
+      // Only the expense total feeds the budget math; income is tracked
+      // separately so it never counts as "spending".
       monthlyTotal = await _db.fetchCurrentMonthTotal();
+      monthlyIncome = await _db.fetchCurrentMonthIncome();
 
       // STEP 3b: call Groq for the critique text.
       final feedback = await _ai.critiqueTransaction(
@@ -86,6 +93,7 @@ class WalletController extends ChangeNotifier {
         monthlyTotalAfterThisTransaction: monthlyTotal,
         budgetThreshold: profile!.budgetThreshold,
         parentPersonality: profile!.parentPersonality,
+        type: type,
       );
 
       // STEP 4: patch the transaction row with the AI's text.

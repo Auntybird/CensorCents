@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import '../models/transaction_model.dart';
 import '../theme/app_theme.dart';
 
 /// Elegant animated bottom sheet used to present the AI's real-time
 /// critique the moment `ai_feedback` lands on a transaction row.
 ///
-/// [isOverBudget] just controls the accent color (red scold vs green praise);
-/// the actual wording always comes from Groq.
+/// [isOverBudget] controls the accent color for EXPENSE entries (red scold
+/// vs green praise). INCOME entries always render in green since money
+/// coming in is never itself a budget violation — the actual wording still
+/// always comes from Groq.
 class AiFeedbackSheet extends StatelessWidget {
   final String feedbackText;
   final bool isOverBudget;
   final String category;
   final double amount;
+  final TransactionType type;
 
   const AiFeedbackSheet({
     super.key,
@@ -18,6 +22,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required this.isOverBudget,
     required this.category,
     required this.amount,
+    this.type = TransactionType.expense,
   });
 
   static Future<void> show(
@@ -26,6 +31,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required bool isOverBudget,
     required String category,
     required double amount,
+    TransactionType type = TransactionType.expense,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -36,13 +42,18 @@ class AiFeedbackSheet extends StatelessWidget {
         isOverBudget: isOverBudget,
         category: category,
         amount: amount,
+        type: type,
       ),
     );
   }
 
+  bool get _isIncome => type == TransactionType.income;
+
   @override
   Widget build(BuildContext context) {
-    final accent = isOverBudget ? AppColors.overspendRed : AppColors.savingsGreen;
+    final accent = _isIncome
+        ? AppColors.savingsGreen
+        : (isOverBudget ? AppColors.overspendRed : AppColors.savingsGreen);
 
     // TweenAnimationBuilder gives a nice pop/slide-in without needing a
     // dedicated AnimationController + StatefulWidget boilerplate.
@@ -65,7 +76,7 @@ class AiFeedbackSheet extends StatelessWidget {
           border: Border.all(color: accent, width: 1.5),
           boxShadow: [
             BoxShadow(
-              color: accent.withOpacity(0.3),
+              color: accent.withValues(alpha: 0.3),
               blurRadius: 30,
               spreadRadius: 2,
             ),
@@ -78,12 +89,16 @@ class AiFeedbackSheet extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  isOverBudget ? Icons.warning_rounded : Icons.emoji_events_rounded,
+                  _isIncome
+                      ? Icons.trending_up_rounded
+                      : (isOverBudget ? Icons.warning_rounded : Icons.emoji_events_rounded),
                   color: accent,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  isOverBudget ? 'TIGER PARENT IS DISAPPOINTED' : 'TIGER PARENT APPROVES',
+                  _isIncome
+                      ? 'CENSORCENTS NOTES YOUR INCOME'
+                      : (isOverBudget ? 'CENSORCENTS IS DISAPPOINTED' : 'CENSORCENTS APPROVES'),
                   style: TextStyle(
                     color: accent,
                     fontWeight: FontWeight.bold,
