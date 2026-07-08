@@ -23,6 +23,14 @@
       ]
     },
     {
+      "name": "fl_chart",
+      "version": "0.69.2",
+      "dependencies": [
+        "equatable",
+        "flutter"
+      ]
+    },
+    {
       "name": "flutter_launcher_icons",
       "version": "0.14.4",
       "dependencies": [
@@ -127,6 +135,14 @@
         "meta",
         "sky_engine",
         "vector_math"
+      ]
+    },
+    {
+      "name": "equatable",
+      "version": "2.1.0",
+      "dependencies": [
+        "collection",
+        "meta"
       ]
     },
     {
@@ -828,22 +844,6 @@
       "version": "3.1.2",
       "dependencies": [
         "typed_data"
-      ]
-    },
-    {
-      "name": "fl_chart",
-      "version": "0.69.2",
-      "dependencies": [
-        "equatable",
-        "flutter"
-      ]
-    },
-    {
-      "name": "equatable",
-      "version": "2.1.0",
-      "dependencies": [
-        "collection",
-        "meta"
       ]
     }
   ],

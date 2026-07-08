@@ -1,3 +1,4 @@
 {
-    "envWatcher.enabled": true
+    "envWatcher.enabled": true,
+    "python.terminal.useEnvFile": true
 }
