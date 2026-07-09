@@ -58,6 +58,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         category: event.category,
         amount: event.amount,
         type: event.type,
+        note: event.note,
       );
     });
   }
@@ -82,11 +83,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final result = await AddTransactionSheet.show(context);
     if (result == null) return;
 
-    final (amount, category, type) = result;
+    final (amount, category, type, note) = result;
     await controller.submitTransaction(
       amount: amount,
       category: category,
       type: type,
+      note: note,
     );
   }
 
@@ -95,12 +97,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final result = await AddTransactionSheet.show(context, existing: tx);
     if (result == null) return;
 
-    final (amount, category, type) = result;
+    final (amount, category, type, note) = result;
     await controller.editTransaction(
       original: tx,
       amount: amount,
       category: category,
       type: type,
+      note: note,
     );
   }
 
@@ -576,6 +579,19 @@ class _TransactionTile extends StatelessWidget {
                         DateFormat.yMMMd().add_jm().format(transaction.timestamp),
                         style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                       ),
+                      if (transaction.note != null && transaction.note!.trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          '"${transaction.note!.trim()}"',
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -15,6 +15,7 @@ class AiFeedbackSheet extends StatelessWidget {
   final String category;
   final double amount;
   final TransactionType type;
+  final String? note;
 
   const AiFeedbackSheet({
     super.key,
@@ -23,6 +24,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required this.category,
     required this.amount,
     this.type = TransactionType.expense,
+    this.note,
   });
 
   static Future<void> show(
@@ -32,6 +34,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required String category,
     required double amount,
     TransactionType type = TransactionType.expense,
+    String? note,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -43,6 +46,7 @@ class AiFeedbackSheet extends StatelessWidget {
         category: category,
         amount: amount,
         type: type,
+        note: note,
       ),
     );
   }
@@ -130,6 +134,17 @@ class AiFeedbackSheet extends StatelessWidget {
                 style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
               ),
             ),
+            if (note != null && note!.trim().isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                '"${note!.trim()}"',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
@@ -143,7 +158,7 @@ class AiFeedbackSheet extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Yes Boss'),
+                child: const Text('Yes, Boss'),
               ),
             ),
           ],

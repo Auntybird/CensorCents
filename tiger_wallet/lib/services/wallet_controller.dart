@@ -19,11 +19,14 @@ import 'supabase_service.dart';
 /// swiping between pages), since a rebuild has nothing to do with whether
 /// new feedback actually arrived.
 class WalletController extends ChangeNotifier {
-  final SupabaseService _db = SupabaseService.instance;
-  final GroqService _ai = GroqService.instance;
+  SupabaseService? _dbInstance;
+  SupabaseService get _db => _dbInstance ??= SupabaseService.instance;
+
+  GroqService? _aiInstance;
+  GroqService get _ai => _aiInstance ??= GroqService.instance;
 
   UserProfile? profile;
-  List<TransactionModel> transactions = [];
+  List<TransactionModel> transactions;
   double monthlyTotal = 0; // expenses only
   double monthlyIncome = 0;
   bool isLoading = false;
@@ -35,6 +38,37 @@ class WalletController extends ChangeNotifier {
 
   final StreamController<FeedbackEvent> _feedbackEventsController =
       StreamController<FeedbackEvent>.broadcast();
+
+  /// Normal usage: `WalletController()` starts empty — call [initialize] to
+  /// load everything from Supabase like the real app does.
+  ///
+  /// Test usage: pass [initialTransactions] (and optionally [initialProfile])
+  /// to seed the controller directly, skipping Supabase/Groq entirely.
+  /// [monthlyTotal] / [monthlyIncome] are derived from the seed data the
+  /// same way [initialize] would derive them, so analytics getters
+  /// ([expenseByCategoryThisMonth], [dailyNetTrend], [monthlyBalance],
+  /// [budgetProgress], [isOverBudget], etc.) all behave correctly in unit
+  /// tests without a live backend.
+  WalletController({List<TransactionModel>? initialTransactions, UserProfile? initialProfile})
+      : transactions = initialTransactions ?? [],
+        profile = initialProfile {
+    if (initialTransactions != null) {
+      monthlyTotal = _sumForCurrentMonth(initialTransactions, TransactionType.expense);
+      monthlyIncome = _sumForCurrentMonth(initialTransactions, TransactionType.income);
+    }
+  }
+
+  static double _sumForCurrentMonth(List<TransactionModel> txs, TransactionType type) {
+    final now = DateTime.now();
+    final monthStart = DateTime(now.year, now.month, 1);
+    double total = 0;
+    for (final tx in txs) {
+      if (tx.type == type && !tx.timestamp.isBefore(monthStart)) {
+        total += tx.amount;
+      }
+    }
+    return total;
+  }
 
   /// Listen to this to know exactly when to pop the AI feedback sheet.
   Stream<FeedbackEvent> get feedbackEvents => _feedbackEventsController.stream;
@@ -149,6 +183,7 @@ class WalletController extends ChangeNotifier {
     required double amount,
     required String category,
     TransactionType type = TransactionType.expense,
+    String? note,
   }) async {
     if (profile == null) return;
     isSubmitting = true;
@@ -160,6 +195,7 @@ class WalletController extends ChangeNotifier {
         amount: amount,
         category: category,
         type: type,
+        note: note,
       );
 
       monthlyTotal = await _db.fetchCurrentMonthTotal();
@@ -172,6 +208,7 @@ class WalletController extends ChangeNotifier {
         budgetThreshold: profile!.budgetThreshold,
         parentPersonality: profile!.parentPersonality,
         type: type,
+        note: note,
       );
 
       await _db.updateTransactionFeedback(
@@ -184,6 +221,7 @@ class WalletController extends ChangeNotifier {
         category: category,
         amount: amount,
         type: type,
+        note: note,
         isCorrection: false,
       ));
     } catch (e) {
@@ -202,6 +240,7 @@ class WalletController extends ChangeNotifier {
     required double amount,
     required String category,
     required TransactionType type,
+    String? note,
   }) async {
     isSubmitting = true;
     errorMessage = null;
@@ -213,6 +252,7 @@ class WalletController extends ChangeNotifier {
         amount: amount,
         category: category,
         type: type,
+        note: note,
       );
 
       monthlyTotal = await _db.fetchCurrentMonthTotal();
@@ -222,6 +262,7 @@ class WalletController extends ChangeNotifier {
         action: TransactionAction.edited,
         category: category,
         amount: amount,
+        note: note,
       );
 
       await _db.updateTransactionFeedback(
@@ -234,6 +275,7 @@ class WalletController extends ChangeNotifier {
         category: category,
         amount: amount,
         type: type,
+        note: note,
         isCorrection: true,
       ));
     } catch (e) {
@@ -258,6 +300,7 @@ class WalletController extends ChangeNotifier {
         action: TransactionAction.deleted,
         category: transaction.category,
         amount: transaction.amount,
+        note: transaction.note,
       );
 
       await _db.deleteTransaction(transaction.id);
@@ -270,6 +313,7 @@ class WalletController extends ChangeNotifier {
         category: transaction.category,
         amount: transaction.amount,
         type: transaction.type,
+        note: transaction.note,
         isCorrection: true,
       ));
     } catch (e) {

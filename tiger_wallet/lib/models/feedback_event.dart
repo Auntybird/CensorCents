@@ -12,6 +12,7 @@ class FeedbackEvent {
   final String category;
   final double amount;
   final TransactionType type;
+  final String? note;
 
   /// True for edit/delete roasts, false for the original post-submit critique.
   final bool isCorrection;
@@ -21,6 +22,7 @@ class FeedbackEvent {
     required this.category,
     required this.amount,
     required this.type,
+    this.note,
     this.isCorrection = false,
   });
 }

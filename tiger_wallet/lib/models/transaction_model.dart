@@ -26,6 +26,11 @@ enum TransactionType {
 /// `type` distinguishes spending from income. Income rows still get an AI
 /// critique (a much friendlier one), but are excluded from the "monthly
 /// spend vs budget_threshold" math.
+///
+/// `note` is a short optional free-text detail the user types in when
+/// logging the entry (e.g. "birthday dinner for my sister") — it's passed
+/// to Groq so the critique can reference specifics instead of staying
+/// generic to just the category.
 class TransactionModel {
   final String id;
   final String userId;
@@ -34,6 +39,7 @@ class TransactionModel {
   final DateTime timestamp;
   final String? aiFeedback;
   final TransactionType type;
+  final String? note;
 
   const TransactionModel({
     required this.id,
@@ -43,6 +49,7 @@ class TransactionModel {
     required this.timestamp,
     this.aiFeedback,
     this.type = TransactionType.expense,
+    this.note,
   });
 
   bool get isIncome => type == TransactionType.income;
@@ -59,6 +66,7 @@ class TransactionModel {
       // Older rows inserted before this column existed will come back null,
       // which fromValue() safely treats as an expense.
       type: TransactionType.fromValue(json['type'] as String?),
+      note: json['note'] as String?,
     );
   }
 
@@ -70,15 +78,19 @@ class TransactionModel {
 
   /// Payload used when creating a brand-new transaction (no id/feedback yet —
   /// id is generated server-side, feedback is patched in after the AI call).
+  /// `note` is sent as null rather than omitted when blank, so clearing a
+  /// note on edit actually clears it in the database instead of leaving the
+  /// old value behind.
   Map<String, dynamic> toInsertJson() => {
         'user_id': userId,
         'amount': amount,
         'category': category,
         'timestamp': timestamp.toIso8601String(),
         'type': type.value,
+        'note': (note == null || note!.trim().isEmpty) ? null : note!.trim(),
       };
 
-  TransactionModel copyWith({String? aiFeedback, TransactionType? type}) {
+  TransactionModel copyWith({String? aiFeedback, TransactionType? type, String? note}) {
     return TransactionModel(
       id: id,
       userId: userId,
@@ -87,6 +99,7 @@ class TransactionModel {
       timestamp: timestamp,
       aiFeedback: aiFeedback ?? this.aiFeedback,
       type: type ?? this.type,
+      note: note ?? this.note,
     );
   }
 }

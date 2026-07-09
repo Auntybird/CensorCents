@@ -21,21 +21,24 @@ const List<String> kIncomeCategories = [
   'Other Income',
 ];
 
-/// Modal form: type (income/expense) + amount + category. Doubles as both
-/// "Add Transaction" and "Edit Transaction" — pass [existing] to pre-fill
-/// the form and switch the copy/button to editing mode. On submit, returns
-/// an (amount, category, type) triple via Navigator.pop, or null if
-/// cancelled.
+const int kNoteMaxLength = 140;
+
+/// Modal form: type (income/expense) + amount + category + an optional
+/// short "details" note. Doubles as both "Add Transaction" and
+/// "Edit Transaction" — pass [existing] to pre-fill the form and switch the
+/// copy/button to editing mode. On submit, returns an
+/// (amount, category, type, note) record via Navigator.pop, or null if
+/// cancelled. `note` is null when left blank.
 class AddTransactionSheet extends StatefulWidget {
   final TransactionModel? existing;
 
   const AddTransactionSheet({super.key, this.existing});
 
-  static Future<(double, String, TransactionType)?> show(
+  static Future<(double, String, TransactionType, String?)?> show(
     BuildContext context, {
     TransactionModel? existing,
   }) {
-    return showModalBottomSheet<(double, String, TransactionType)>(
+    return showModalBottomSheet<(double, String, TransactionType, String?)>(
       context: context,
       isScrollControlled: true,
       backgroundColor: AppColors.surface,
@@ -53,6 +56,7 @@ class AddTransactionSheet extends StatefulWidget {
 class _AddTransactionSheetState extends State<AddTransactionSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _amountController;
+  late final TextEditingController _noteController;
 
   late TransactionType _type;
   late String _selectedCategory;
@@ -70,6 +74,7 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
     _amountController = TextEditingController(
       text: existing != null ? existing.amount.toStringAsFixed(2) : '',
     );
+    _noteController = TextEditingController(text: existing?.note ?? '');
     // If we're editing and the existing category is still valid for this
     // type, keep it; otherwise fall back to the first option for the type.
     _selectedCategory = (existing != null && _categoriesForType.contains(existing.category))
@@ -90,13 +95,17 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
   @override
   void dispose() {
     _amountController.dispose();
+    _noteController.dispose();
     super.dispose();
   }
 
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
     final amount = double.parse(_amountController.text);
-    Navigator.of(context).pop((amount, _selectedCategory, _type));
+    final noteText = _noteController.text.trim();
+    Navigator.of(context).pop(
+      (amount, _selectedCategory, _type, noteText.isEmpty ? null : noteText),
+    );
   }
 
   @override
@@ -203,7 +212,25 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
                   if (value != null) setState(() => _selectedCategory = value);
                 },
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              // Small optional details box — the more specific this is, the
+              // sharper the AI's reaction, since it gets passed straight
+              // into the critique prompt instead of just the category.
+              TextFormField(
+                controller: _noteController,
+                maxLength: kNoteMaxLength,
+                maxLines: 2,
+                minLines: 1,
+                style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                decoration: const InputDecoration(
+                  labelText: 'Details (optional)',
+                  hintText: 'e.g. bubble tea run with Sarah after work',
+                  hintStyle: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                  prefixIcon: Icon(Icons.edit_note, color: AppColors.textSecondary),
+                  counterStyle: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                ),
+              ),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(

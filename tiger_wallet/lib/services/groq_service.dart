@@ -32,7 +32,7 @@ class GroqService {
   static const String _systemPrompt = '''
 You are an incredibly strict, foul-mouthed, traditional, blunt Asian parent. Your absolute and only goal is to manage the user's money with an iron fist and enforce extreme financial discipline. You are easily disappointed and impossible to completely please.
 
-You will be told whether this entry is an EXPENSE (money going out) or INCOME (money coming in), along with the amount, category, total spending so far this month, and the monthly budget threshold.
+You will be told whether this entry is an EXPENSE (money going out) or INCOME (money coming in), along with the amount, category, total spending so far this month, and the monthly budget threshold. You may also be given the user's own short note about the entry — when a note is present, ground your reaction in that specific detail (the "what" and "why" they typed) instead of only reacting to the category. A generic scold about "Food & Dining" is weak; catching that they specifically bought bubble tea for the third time this week is the whole point. If no note is given, react to the category and amount alone as before.
 
 --- IF THE ENTRY IS AN EXPENSE ---
 1. ANALYZE & COMPARE: Look closely at the category and amount. Check the total monthly spending against their threshold.
@@ -76,6 +76,7 @@ Keep it under 3 sentences. Speak directly to the user in second person. Plain te
     required double budgetThreshold,
     String parentPersonality = 'Strict',
     TransactionType type = TransactionType.expense,
+    String? note,
   }) async {
     if (_apiKey.isEmpty) {
       throw StateError('GROQ_API_KEY missing — check your .env file.');
@@ -89,18 +90,23 @@ Keep it under 3 sentences. Speak directly to the user in second person. Plain te
     final entryLabel = type == TransactionType.income ? 'INCOME' : 'EXPENSE';
     final amountLabel =
         type == TransactionType.income ? 'Amount received' : 'Amount spent';
+    final hasNote = note != null && note.trim().isNotEmpty;
+    final noteLine = hasNote
+        ? "- User's own note about this entry: \"${note.trim()}\""
+        : '- User\'s own note about this entry: (none provided)';
 
     final userPrompt = '''
 New entry just logged:
 - Entry type: $entryLabel
 - $amountLabel: \$${amount.toStringAsFixed(2)}
 - Category: $category
+$noteLine
 - Total spent this month so far (expenses only, not counting income): \$${monthlyTotalAfterThisTransaction.toStringAsFixed(2)}
 - Monthly budget threshold: \$${budgetThreshold.toStringAsFixed(2)}
 - $statusLine
 - Requested persona intensity: $parentPersonality
 
-React to this $entryLabel entry as Tiger Parent, following your system instructions.
+React to this $entryLabel entry as Tiger Parent, following your system instructions. If a note was provided, react to the SPECIFIC detail in it rather than staying generic to the category — that's what makes the roast land.
 ''';
 
     final response = await http.post(
@@ -142,17 +148,23 @@ React to this $entryLabel entry as Tiger Parent, following your system instructi
     required TransactionAction action,
     required String category,
     required double amount,
+    String? note,
   }) async {
     if (_apiKey.isEmpty) {
       throw StateError('GROQ_API_KEY missing — check your .env file.');
     }
 
     final actionLabel = action == TransactionAction.edited ? 'EDITED' : 'DELETED';
+    final hasNote = note != null && note.trim().isNotEmpty;
+    final noteLine = hasNote
+        ? "- User's note on the corrected entry: \"${note.trim()}\""
+        : '- User\'s note on the corrected entry: (none provided)';
 
     final userPrompt = '''
 The user just $actionLabel a money entry they had previously logged incorrectly:
 - Category: $category
 - Amount: \$${amount.toStringAsFixed(2)}
+$noteLine
 - Action taken: $actionLabel
 
 Mock them for needing to fix their own mistake, following your correction-mode instructions.

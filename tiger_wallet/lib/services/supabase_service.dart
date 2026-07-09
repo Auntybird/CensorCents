@@ -131,6 +131,7 @@ class SupabaseService {
     required double amount,
     required String category,
     TransactionType type = TransactionType.expense,
+    String? note,
   }) async {
     final uid = currentUser?.id;
     if (uid == null) throw StateError('No authenticated user.');
@@ -142,6 +143,7 @@ class SupabaseService {
       category: category,
       timestamp: DateTime.now(),
       type: type,
+      note: note,
     );
 
     final inserted = await _client
@@ -165,13 +167,14 @@ class SupabaseService {
   }
 
   /// Lets the user fix a transaction they entered wrong. Overwrites amount,
-  /// category, and type; `ai_feedback` gets patched separately afterwards
-  /// once the "you typed it wrong the first time" roast comes back.
+  /// category, type, and note; `ai_feedback` gets patched separately
+  /// afterwards once the "you typed it wrong the first time" roast comes back.
   Future<TransactionModel> updateTransaction({
     required String transactionId,
     required double amount,
     required String category,
     required TransactionType type,
+    String? note,
   }) async {
     final updated = await _client
         .from('transactions')
@@ -179,6 +182,7 @@ class SupabaseService {
           'amount': amount,
           'category': category,
           'type': type.value,
+          'note': (note == null || note.trim().isEmpty) ? null : note.trim(),
         })
         .eq('id', transactionId)
         .select()
