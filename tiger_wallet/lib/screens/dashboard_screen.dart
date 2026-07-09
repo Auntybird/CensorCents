@@ -351,7 +351,14 @@ class _TransactionsPage extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Recent Transactions', style: Theme.of(context).textTheme.headlineMedium),
+              Expanded(
+                child: Text(
+                  'Recent Transactions',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
               OutlinedButton.icon(
                 onPressed: controller.isSubmitting ? null : onAddTransaction,
                 icon: const Icon(Icons.add, size: 18),
