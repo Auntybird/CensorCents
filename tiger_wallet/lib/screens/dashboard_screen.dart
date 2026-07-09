@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../models/feedback_event.dart';
 import '../models/transaction_model.dart';
 import '../services/supabase_service.dart';
 import '../services/wallet_controller.dart';
@@ -11,9 +13,14 @@ import '../widgets/edit_budget_sheet.dart';
 import '../widgets/stern_avatar.dart';
 import 'analytics_screen.dart';
 
-/// The primary screen: stern avatar, budget progress, "Add Transaction"
-/// button, and a scrollable history where each card shows the AI's
-/// critique once it has landed.
+const List<String> _kPageTitles = ['CensorCents', 'Transactions', 'Analytics'];
+
+/// The primary shell after login: a horizontally swipeable 3-page view.
+///   Page 1 (Home)         — stern avatar + budget summary + edit budget
+///   Page 2 (Transactions) — full history + "Add Transaction" FAB, each row
+///                            editable/deletable
+///   Page 3 (Analytics)    — spending charts (AnalyticsBody)
+/// Swipe left/right or tap the dot indicator to move between them.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -23,18 +30,51 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final _currency = NumberFormat.currency(symbol: '\$');
+  final _pageController = PageController();
+  int _currentPage = 0;
 
-  // Tracks which transaction IDs we've already popped a feedback sheet for,
-  // so the Realtime stream doesn't re-show the same critique on every rebuild.
-  final Set<String> _shownFeedbackIds = {};
+  StreamSubscription<FeedbackEvent>? _feedbackSub;
 
   @override
   void initState() {
     super.initState();
+    final controller = context.read<WalletController>();
+
     // Kick off the initial load once the widget tree is ready.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<WalletController>().initialize();
+      controller.initialize();
     });
+
+    // The ONLY thing that pops the AI feedback sheet. This fires exactly
+    // once per submit/edit/delete, regardless of how many times the widget
+    // tree rebuilds for unrelated reasons (like swiping between pages) — so
+    // it can never resurface old feedback on its own.
+    _feedbackSub = controller.feedbackEvents.listen((event) {
+      if (!mounted) return;
+      AiFeedbackSheet.show(
+        context,
+        feedbackText: event.message,
+        isOverBudget: controller.isOverBudget,
+        category: event.category,
+        amount: event.amount,
+        type: event.type,
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _feedbackSub?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _goToPage(int index) {
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _openAddTransactionSheet() async {
@@ -48,6 +88,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
       category: category,
       type: type,
     );
+  }
+
+  Future<void> _openEditTransactionSheet(TransactionModel tx) async {
+    final controller = context.read<WalletController>();
+    final result = await AddTransactionSheet.show(context, existing: tx);
+    if (result == null) return;
+
+    final (amount, category, type) = result;
+    await controller.editTransaction(
+      original: tx,
+      amount: amount,
+      category: category,
+      type: type,
+    );
+  }
+
+  Future<void> _confirmDeleteTransaction(TransactionModel tx) async {
+    final controller = context.read<WalletController>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.surfaceElevated,
+        title: const Text('Delete this entry?', style: TextStyle(color: AppColors.textPrimary)),
+        content: Text(
+          'This permanently removes "${tx.category}" (${_currency.format(tx.amount)}). This can\'t be undone.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete', style: TextStyle(color: AppColors.overspendRed)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await controller.deleteTransaction(tx);
+    }
   }
 
   Future<void> _openEditBudgetSheet() async {
@@ -69,33 +152,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  /// Watches for any transaction whose ai_feedback just arrived and hasn't
-  /// been shown yet, then pops the animated sheet for it (Step 5 of the flow).
-  void _maybeShowNewFeedback(List<TransactionModel> transactions) {
-    for (final tx in transactions) {
-      if (tx.aiFeedback != null && !_shownFeedbackIds.contains(tx.id)) {
-        _shownFeedbackIds.add(tx.id);
-        final controller = context.read<WalletController>();
-        final isOver = controller.profile != null &&
-            controller.monthlyTotal > controller.profile!.budgetThreshold;
-
-        // Defer to next frame to avoid calling showModalBottomSheet mid-build.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          AiFeedbackSheet.show(
-            context,
-            feedbackText: tx.aiFeedback!,
-            isOverBudget: isOver,
-            category: tx.category,
-            amount: tx.amount,
-            type: tx.type,
-          );
-        });
-        break; // show one at a time
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Consumer<WalletController>(
@@ -106,21 +162,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           );
         }
 
-        _maybeShowNewFeedback(controller.transactions);
-
-        final mood = moodForRatio(controller.budgetProgress);
-
         return Scaffold(
           appBar: AppBar(
-            title: const Text('CensorCents'),
+            title: Text(_kPageTitles[_currentPage]),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.bar_chart_rounded),
-                tooltip: 'Analytics',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AnalyticsScreen()),
-                ),
-              ),
               IconButton(
                 icon: const Icon(Icons.logout),
                 tooltip: 'Sign out',
@@ -128,89 +173,218 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ],
           ),
-          body: RefreshIndicator(
-            color: AppColors.savingsGreen,
-            onRefresh: controller.initialize,
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                Center(child: SternAvatar(mood: mood)),
-                const SizedBox(height: 24),
-                // ==========================================
-                // AI engine failure banner
-                // ==========================================
-                if (controller.errorMessage != null) ...[
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 24),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AppColors.overspendRed.withOpacity(0.1),
-                      border: Border.all(color: AppColors.overspendRed, width: 1.5),
-                      borderRadius: BorderRadius.circular(12),
+          body: PageView(
+            controller: _pageController,
+            onPageChanged: (index) => setState(() => _currentPage = index),
+            children: [
+              _HomePage(
+                controller: controller,
+                currency: _currency,
+                onEditBudget: _openEditBudgetSheet,
+              ),
+              _TransactionsPage(
+                controller: controller,
+                currency: _currency,
+                onAddTransaction: _openAddTransactionSheet,
+                onEditTransaction: _openEditTransactionSheet,
+                onDeleteTransaction: _confirmDeleteTransaction,
+              ),
+              const AnalyticsBody(),
+            ],
+          ),
+          // Tappable dot indicator so the pages are discoverable even before
+          // someone thinks to swipe.
+          bottomNavigationBar: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(_kPageTitles.length, (index) {
+                  final isActive = index == _currentPage;
+                  return GestureDetector(
+                    onTap: () => _goToPage(index),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: isActive ? 20 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: isActive ? AppColors.savingsGreen : AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                     ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Icon(Icons.warning_amber_rounded, color: AppColors.overspendRed),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'AI ENGINE FAILURE:\n${controller.errorMessage}',
-                            style: const TextStyle(
-                              color: AppColors.overspendRed,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ],
+                  );
+                }),
+              ),
+            ),
+          ),
+          floatingActionButton: _currentPage == 1
+              ? FloatingActionButton.extended(
+                  onPressed: controller.isSubmitting ? null : _openAddTransactionSheet,
+                  icon: controller.isSubmitting
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                        )
+                      : const Icon(Icons.add),
+                  label: Text(controller.isSubmitting ? 'Judging...' : 'Add Transaction'),
+                )
+              : null,
+        );
+      },
+    );
+  }
+}
+
+/// PAGE 1 — avatar, budget summary card, error banner.
+class _HomePage extends StatelessWidget {
+  final WalletController controller;
+  final NumberFormat currency;
+  final VoidCallback onEditBudget;
+
+  const _HomePage({
+    required this.controller,
+    required this.currency,
+    required this.onEditBudget,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final mood = moodForRatio(controller.budgetProgress);
+
+    return RefreshIndicator(
+      color: AppColors.savingsGreen,
+      onRefresh: controller.initialize,
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Center(child: SternAvatar(mood: mood)),
+          const SizedBox(height: 24),
+          if (controller.errorMessage != null) ...[
+            Container(
+              margin: const EdgeInsets.only(bottom: 24),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.overspendRed.withOpacity(0.1),
+                border: Border.all(color: AppColors.overspendRed, width: 1.5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: AppColors.overspendRed),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'AI ENGINE FAILURE:\n${controller.errorMessage}',
+                      style: const TextStyle(
+                        color: AppColors.overspendRed,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ],
-                // ==========================================
-                _BudgetSummaryCard(
-                  monthlyTotal: controller.monthlyTotal,
-                  monthlyIncome: controller.monthlyIncome,
-                  balance: controller.monthlyBalance,
-                  threshold: controller.profile?.budgetThreshold ?? 0,
-                  progress: controller.budgetProgress,
-                  currency: _currency,
-                  onEdit: _openEditBudgetSheet,
-                ),
-                const SizedBox(height: 24),
-                Text('Recent Transactions', style: Theme.of(context).textTheme.headlineMedium),
-                const SizedBox(height: 12),
-                if (controller.transactions.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
-                    child: Center(
-                      child: Text(
-                        'No transactions yet. Try to keep it that way.',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                    ),
-                  )
-                else
-                  ...controller.transactions.map(
-                    (tx) => _TransactionTile(transaction: tx, currency: _currency),
+              ),
+            ),
+          ],
+          _BudgetSummaryCard(
+            monthlyTotal: controller.monthlyTotal,
+            monthlyIncome: controller.monthlyIncome,
+            balance: controller.monthlyBalance,
+            threshold: controller.profile?.budgetThreshold ?? 0,
+            progress: controller.budgetProgress,
+            currency: currency,
+            onEdit: onEditBudget,
+          ),
+          const SizedBox(height: 24),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.swipe_left_alt_rounded, size: 16, color: AppColors.textSecondary),
+                  SizedBox(width: 6),
+                  Text(
+                    'Swipe left for transactions & analytics',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                   ),
-                const SizedBox(height: 100), // room above the FAB
-              ],
+                ],
+              ),
             ),
           ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: controller.isSubmitting ? null : _openAddTransactionSheet,
-            icon: controller.isSubmitting
-                ? const SizedBox(
-                    height: 18,
-                    width: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                  )
-                : const Icon(Icons.add),
-            label: Text(controller.isSubmitting ? 'Judging...' : 'Add Transaction'),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+}
+
+/// PAGE 2 — full transaction history list (the "Add Transaction" action
+/// lives on the shell's FloatingActionButton while this page is visible).
+/// Each row can be edited or deleted via its overflow menu.
+class _TransactionsPage extends StatelessWidget {
+  final WalletController controller;
+  final NumberFormat currency;
+  final VoidCallback onAddTransaction;
+  final ValueChanged<TransactionModel> onEditTransaction;
+  final ValueChanged<TransactionModel> onDeleteTransaction;
+
+  const _TransactionsPage({
+    required this.controller,
+    required this.currency,
+    required this.onAddTransaction,
+    required this.onEditTransaction,
+    required this.onDeleteTransaction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      color: AppColors.savingsGreen,
+      onRefresh: controller.initialize,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Recent Transactions', style: Theme.of(context).textTheme.headlineMedium),
+              OutlinedButton.icon(
+                onPressed: controller.isSubmitting ? null : onAddTransaction,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.savingsGreen,
+                  side: const BorderSide(color: AppColors.savingsGreen),
+                ),
+              ),
+            ],
           ),
-        );
-      },
+          const SizedBox(height: 12),
+          if (controller.transactions.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(
+                child: Text(
+                  'No transactions yet. Try to keep it that way.',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ),
+            )
+          else
+            ...controller.transactions.map(
+              (tx) => _TransactionTile(
+                transaction: tx,
+                currency: currency,
+                onEdit: () => onEditTransaction(tx),
+                onDelete: () => onDeleteTransaction(tx),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -342,12 +516,20 @@ class _BudgetSummaryCard extends StatelessWidget {
   }
 }
 
-/// Single row in the transaction history list.
+/// Single row in the transaction history list, with an overflow menu for
+/// editing or deleting the entry.
 class _TransactionTile extends StatelessWidget {
   final TransactionModel transaction;
   final NumberFormat currency;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
-  const _TransactionTile({required this.transaction, required this.currency});
+  const _TransactionTile({
+    required this.transaction,
+    required this.currency,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -367,30 +549,63 @@ class _TransactionTile extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        if (isIncome) ...[
-                          const Icon(Icons.arrow_downward, size: 14, color: AppColors.savingsGreen),
-                          const SizedBox(width: 4),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          if (isIncome) ...[
+                            const Icon(Icons.arrow_downward, size: 14, color: AppColors.savingsGreen),
+                            const SizedBox(width: 4),
+                          ],
+                          Text(
+                            transaction.category,
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                          ),
                         ],
-                        Text(
-                          transaction.category,
-                          style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
-                        ),
-                      ],
-                    ),
-                    Text(
-                      DateFormat.yMMMd().add_jm().format(transaction.timestamp),
-                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
-                    ),
-                  ],
+                      ),
+                      Text(
+                        DateFormat.yMMMd().add_jm().format(transaction.timestamp),
+                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      ),
+                    ],
+                  ),
                 ),
                 Text(
                   signedAmount,
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: amountColor),
+                ),
+                PopupMenuButton<String>(
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.more_vert, size: 18, color: AppColors.textSecondary),
+                  color: AppColors.surfaceElevated,
+                  onSelected: (value) {
+                    if (value == 'edit') onEdit();
+                    if (value == 'delete') onDelete();
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit_outlined, size: 18, color: AppColors.textPrimary),
+                          SizedBox(width: 8),
+                          Text('Edit', style: TextStyle(color: AppColors.textPrimary)),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline, size: 18, color: AppColors.overspendRed),
+                          SizedBox(width: 8),
+                          Text('Delete', style: TextStyle(color: AppColors.overspendRed)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

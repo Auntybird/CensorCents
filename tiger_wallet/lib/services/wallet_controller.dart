@@ -1,18 +1,23 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../models/feedback_event.dart';
 import '../models/transaction_model.dart';
 import '../models/user_profile_model.dart';
 import 'groq_service.dart';
 import 'supabase_service.dart';
 
 /// Drives the dashboard: holds current profile + transactions + monthly
-/// total, and implements the exact 5-step workflow described in the spec:
+/// totals, and implements the core submit -> insert -> AI critique -> patch
+/// workflow, plus editing/deleting a transaction (each with its own AI
+/// correction roast).
 ///
-///   1. User submits amount + category from the form.
-///   2. Write the raw transaction to Supabase (no ai_feedback yet).
-///   3. Compute new monthly total -> call Groq for the critique.
-///   4. Patch the same transaction row with ai_feedback.
-///   5. UI (subscribed via Realtime stream) reflects the update immediately.
+/// Feedback popups are driven by [feedbackEvents] — an explicit stream that
+/// only emits right after a submit/edit/delete actually happens. The UI
+/// should listen to that stream rather than diffing the transaction list on
+/// every rebuild; scanning the list on rebuild caused the popup to
+/// resurface old feedback every time the page merely rebuilt (e.g. when
+/// swiping between pages), since a rebuild has nothing to do with whether
+/// new feedback actually arrived.
 class WalletController extends ChangeNotifier {
   final SupabaseService _db = SupabaseService.instance;
   final GroqService _ai = GroqService.instance;
@@ -23,9 +28,16 @@ class WalletController extends ChangeNotifier {
   double monthlyIncome = 0;
   bool isLoading = false;
   bool isSubmitting = false;
+  bool isUpdatingBudget = false;
   String? errorMessage;
 
   StreamSubscription<List<TransactionModel>>? _txSub;
+
+  final StreamController<FeedbackEvent> _feedbackEventsController =
+      StreamController<FeedbackEvent>.broadcast();
+
+  /// Listen to this to know exactly when to pop the AI feedback sheet.
+  Stream<FeedbackEvent> get feedbackEvents => _feedbackEventsController.stream;
 
   bool get isOverBudget =>
       profile != null && monthlyTotal > profile!.budgetThreshold;
@@ -82,8 +94,6 @@ class WalletController extends ChangeNotifier {
     return entries;
   }
 
-  bool isUpdatingBudget = false;
-
   /// Lets the user edit their own budget ceiling / persona from settings.
   /// Refreshes [profile] (and the derived budget getters) on success.
   Future<void> updateBudget({
@@ -108,6 +118,9 @@ class WalletController extends ChangeNotifier {
   }
 
   /// Loads the profile + transaction history and opens the realtime feed.
+  /// The realtime subscription only keeps [transactions] in sync (so edits/
+  /// deletes/inserts from any source show up promptly) — it does NOT drive
+  /// any popups. Popups only ever come from [feedbackEvents].
   Future<void> initialize() async {
     isLoading = true;
     notifyListeners();
@@ -117,8 +130,6 @@ class WalletController extends ChangeNotifier {
       monthlyTotal = await _db.fetchCurrentMonthTotal();
       monthlyIncome = await _db.fetchCurrentMonthIncome();
 
-      // Realtime: whenever ANY row changes (insert or the later ai_feedback
-      // update), refresh the in-memory list so the UI updates automatically.
       _txSub?.cancel();
       _txSub = _db.watchTransactions().listen((rows) {
         transactions = rows;
@@ -132,7 +143,8 @@ class WalletController extends ChangeNotifier {
     }
   }
 
-  /// Executes the full submit -> insert -> AI critique -> patch workflow.
+  /// Executes the full submit -> insert -> AI critique -> patch workflow,
+  /// then emits a [FeedbackEvent] so the UI shows the critique exactly once.
   Future<void> submitTransaction({
     required double amount,
     required String category,
@@ -144,21 +156,15 @@ class WalletController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // STEP 2: write the basic transaction to Supabase first, so the entry
-      // shows up instantly even before the AI responds.
       final inserted = await _db.insertTransaction(
         amount: amount,
         category: category,
         type: type,
       );
 
-      // STEP 3a: recompute the running monthly totals including this entry.
-      // Only the expense total feeds the budget math; income is tracked
-      // separately so it never counts as "spending".
       monthlyTotal = await _db.fetchCurrentMonthTotal();
       monthlyIncome = await _db.fetchCurrentMonthIncome();
 
-      // STEP 3b: call Groq for the critique text.
       final feedback = await _ai.critiqueTransaction(
         amount: amount,
         category: category,
@@ -168,14 +174,104 @@ class WalletController extends ChangeNotifier {
         type: type,
       );
 
-      // STEP 4: patch the transaction row with the AI's text.
       await _db.updateTransactionFeedback(
         transactionId: inserted.id,
         feedback: feedback,
       );
 
-      // STEP 5 happens automatically: the Realtime subscription above
-      // receives the UPDATE event and refreshes `transactions`.
+      _feedbackEventsController.add(FeedbackEvent(
+        message: feedback,
+        category: category,
+        amount: amount,
+        type: type,
+        isCorrection: false,
+      ));
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Lets the user fix a transaction they typed in wrong. Overwrites the
+  /// row, gets a fresh "you couldn't even get this right the first time"
+  /// roast from Groq, patches it into `ai_feedback`, and emits the popup.
+  Future<void> editTransaction({
+    required TransactionModel original,
+    required double amount,
+    required String category,
+    required TransactionType type,
+  }) async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _db.updateTransaction(
+        transactionId: original.id,
+        amount: amount,
+        category: category,
+        type: type,
+      );
+
+      monthlyTotal = await _db.fetchCurrentMonthTotal();
+      monthlyIncome = await _db.fetchCurrentMonthIncome();
+
+      final roast = await _ai.critiqueCorrection(
+        action: TransactionAction.edited,
+        category: category,
+        amount: amount,
+      );
+
+      await _db.updateTransactionFeedback(
+        transactionId: original.id,
+        feedback: roast,
+      );
+
+      _feedbackEventsController.add(FeedbackEvent(
+        message: roast,
+        category: category,
+        amount: amount,
+        type: type,
+        isCorrection: true,
+      ));
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Deletes a transaction outright and pops a roast for it. The roast is
+  /// fetched before the delete so we still have the category/amount to
+  /// describe — there's no row left afterwards to patch `ai_feedback` onto,
+  /// so this is shown as a one-off popup rather than persisted anywhere.
+  Future<void> deleteTransaction(TransactionModel transaction) async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+
+    try {
+      final roast = await _ai.critiqueCorrection(
+        action: TransactionAction.deleted,
+        category: transaction.category,
+        amount: transaction.amount,
+      );
+
+      await _db.deleteTransaction(transaction.id);
+
+      monthlyTotal = await _db.fetchCurrentMonthTotal();
+      monthlyIncome = await _db.fetchCurrentMonthIncome();
+
+      _feedbackEventsController.add(FeedbackEvent(
+        message: roast,
+        category: transaction.category,
+        amount: transaction.amount,
+        type: transaction.type,
+        isCorrection: true,
+      ));
     } catch (e) {
       errorMessage = e.toString();
     } finally {
@@ -187,6 +283,7 @@ class WalletController extends ChangeNotifier {
   @override
   void dispose() {
     _txSub?.cancel();
+    _feedbackEventsController.close();
     super.dispose();
   }
 }

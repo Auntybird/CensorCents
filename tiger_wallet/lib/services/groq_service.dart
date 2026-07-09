@@ -3,6 +3,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import '../models/transaction_model.dart';
 
+/// Which correction the user just made to a previously-logged entry.
+enum TransactionAction { edited, deleted }
+
 /// Talks to Groq's OpenAI-compatible chat completion endpoint running Llama 3.
 ///
 /// The entire "personality" of Tiger Wallet lives in [_systemPrompt] below.
@@ -48,6 +51,20 @@ Keep your tone condescending, disappointed, hyper-critical, and single-mindedly 
 Within those two lines, be as blunt, sarcastic, and cutting as you want. Keep responses under 4 sentences.
 
 Additional formatting rules: speak directly to the user in second person ("you"), never in third person. Do not use emojis. Do not use hashtags. Output plain text only.
+''';
+
+  /// Fires when the user goes back to EDIT or DELETE an entry they logged
+  /// wrong the first time. Deliberately separate from [_systemPrompt] since
+  /// the framing is different: this isn't about the spending decision, it's
+  /// about them fumbling basic data entry.
+  static const String _correctionSystemPrompt = '''
+You are the same incredibly strict, foul-mouthed, traditional Asian parent from Tiger Wallet, but right now you are reacting to the user going back to FIX or DELETE a money entry they typed in wrong the first time.
+
+Mock them, hard, for being careless enough to mess up something as simple as a number or category. Imply this is exactly the kind of sloppy mistake that leads to bigger financial disasters, and needle them with the fictitious doctor cousin who never fumbles a simple entry. If they DELETED the entry, imply they are trying to erase the evidence of their own incompetence. If they EDITED it, mock them for needing a second attempt at something a child could get right the first time.
+
+Curse words like "damn," "hell," "shit," "crap" are allowed for emphasis. Two lines you must never cross, no matter how annoyed you are: never use slurs or sexual vulgarity, and never insult the user's appearance, intelligence, or worth as a person — the mockery is about THIS carelessness, not who they are.
+
+Keep it under 3 sentences. Speak directly to the user in second person. Plain text only, no emojis, no hashtags.
 ''';
 
   /// Sends the transaction + running monthly total to Groq and returns the
@@ -100,6 +117,61 @@ React to this $entryLabel entry as Tiger Parent, following your system instructi
         ],
         'temperature': 0.8,
         'max_tokens': 200,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Groq API error (${response.statusCode}): ${response.body}',
+      );
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = decoded['choices'] as List?;
+    if (choices == null || choices.isEmpty) {
+      throw Exception('Groq API returned no choices.');
+    }
+
+    final content = choices.first['message']['content'] as String?;
+    return (content ?? "...").trim();
+  }
+
+  /// Sends a short "you messed up your own data entry" prompt to Groq after
+  /// the user edits or deletes a transaction, and returns the roast string.
+  Future<String> critiqueCorrection({
+    required TransactionAction action,
+    required String category,
+    required double amount,
+  }) async {
+    if (_apiKey.isEmpty) {
+      throw StateError('GROQ_API_KEY missing — check your .env file.');
+    }
+
+    final actionLabel = action == TransactionAction.edited ? 'EDITED' : 'DELETED';
+
+    final userPrompt = '''
+The user just $actionLabel a money entry they had previously logged incorrectly:
+- Category: $category
+- Amount: \$${amount.toStringAsFixed(2)}
+- Action taken: $actionLabel
+
+Mock them for needing to fix their own mistake, following your correction-mode instructions.
+''';
+
+    final response = await http.post(
+      Uri.parse(_endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      },
+      body: jsonEncode({
+        'model': _model,
+        'messages': [
+          {'role': 'system', 'content': _correctionSystemPrompt},
+          {'role': 'user', 'content': userPrompt},
+        ],
+        'temperature': 0.9,
+        'max_tokens': 150,
       }),
     );
 

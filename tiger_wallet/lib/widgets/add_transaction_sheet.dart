@@ -21,14 +21,20 @@ const List<String> kIncomeCategories = [
   'Other Income',
 ];
 
-/// Simple modal form: type (income/expense) + amount + category. On submit,
-/// returns an (amount, category, type) triple to the caller via Navigator.pop.
+/// Modal form: type (income/expense) + amount + category. Doubles as both
+/// "Add Transaction" and "Edit Transaction" — pass [existing] to pre-fill
+/// the form and switch the copy/button to editing mode. On submit, returns
+/// an (amount, category, type) triple via Navigator.pop, or null if
+/// cancelled.
 class AddTransactionSheet extends StatefulWidget {
-  const AddTransactionSheet({super.key});
+  final TransactionModel? existing;
+
+  const AddTransactionSheet({super.key, this.existing});
 
   static Future<(double, String, TransactionType)?> show(
-    BuildContext context,
-  ) {
+    BuildContext context, {
+    TransactionModel? existing,
+  }) {
     return showModalBottomSheet<(double, String, TransactionType)>(
       context: context,
       isScrollControlled: true,
@@ -36,7 +42,7 @@ class AddTransactionSheet extends StatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (_) => const AddTransactionSheet(),
+      builder: (_) => AddTransactionSheet(existing: existing),
     );
   }
 
@@ -46,13 +52,30 @@ class AddTransactionSheet extends StatefulWidget {
 
 class _AddTransactionSheetState extends State<AddTransactionSheet> {
   final _formKey = GlobalKey<FormState>();
-  final _amountController = TextEditingController();
+  late final TextEditingController _amountController;
 
-  TransactionType _type = TransactionType.expense;
-  String _selectedCategory = kExpenseCategories.first;
+  late TransactionType _type;
+  late String _selectedCategory;
+
+  bool get _isEditing => widget.existing != null;
 
   List<String> get _categoriesForType =>
       _type == TransactionType.expense ? kExpenseCategories : kIncomeCategories;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    _type = existing?.type ?? TransactionType.expense;
+    _amountController = TextEditingController(
+      text: existing != null ? existing.amount.toStringAsFixed(2) : '',
+    );
+    // If we're editing and the existing category is still valid for this
+    // type, keep it; otherwise fall back to the first option for the type.
+    _selectedCategory = (existing != null && _categoriesForType.contains(existing.category))
+        ? existing.category
+        : _categoriesForType.first;
+  }
 
   void _onTypeChanged(TransactionType type) {
     if (type == _type) return;
@@ -104,11 +127,20 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
                 ),
               ),
               Text(
-                _type == TransactionType.expense
-                    ? 'Confess Your Spending'
-                    : 'Report Your Income',
+                _isEditing
+                    ? 'Fix Your Mistake'
+                    : (_type == TransactionType.expense
+                        ? 'Confess Your Spending'
+                        : 'Report Your Income'),
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
+              if (_isEditing) ...[
+                const SizedBox(height: 4),
+                const Text(
+                  "She's going to hear about this one.",
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                ),
+              ],
               const SizedBox(height: 20),
               // Expense / Income toggle.
               SegmentedButton<TransactionType>(
@@ -181,7 +213,9 @@ class _AddTransactionSheetState extends State<AddTransactionSheet> {
                     foregroundColor: Colors.black,
                   ),
                   child: Text(
-                    _type == TransactionType.expense ? 'Submit' : 'Add Income',
+                    _isEditing
+                        ? 'Save Changes'
+                        : (_type == TransactionType.expense ? 'Submit' : 'Add Income'),
                   ),
                 ),
               ),

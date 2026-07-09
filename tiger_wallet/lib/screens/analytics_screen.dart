@@ -9,60 +9,77 @@ import '../theme/app_theme.dart';
 /// category breakdown of spending, and a rolling daily net-balance trend.
 /// Pulls entirely from data WalletController already has in memory — no
 /// extra Supabase round-trips needed.
-class AnalyticsScreen extends StatelessWidget {
-  const AnalyticsScreen({super.key});
+///
+/// This is the bare content (no Scaffold/AppBar) so it can be embedded as a
+/// page inside the dashboard's swipeable PageView. [AnalyticsScreen] below
+/// wraps it in a Scaffold for standalone use (e.g. if you ever want it
+/// pushed as its own route again).
+class AnalyticsBody extends StatelessWidget {
+  const AnalyticsBody({super.key});
 
   @override
   Widget build(BuildContext context) {
     final currency = NumberFormat.currency(symbol: '\$');
 
+    return Consumer<WalletController>(
+      builder: (context, controller, _) {
+        final categoryTotals = controller.expenseByCategoryThisMonth;
+        final trend = controller.dailyNetTrend(days: 14);
+
+        if (controller.transactions.isEmpty) {
+          return const Center(
+            child: Text(
+              'No data yet. Add a transaction first.',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            _IncomeVsExpenseCard(
+              income: controller.monthlyIncome,
+              expense: controller.monthlyTotal,
+              balance: controller.monthlyBalance,
+              currency: currency,
+            ),
+            const SizedBox(height: 24),
+            Text('Spending by Category', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 12),
+            if (categoryTotals.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text(
+                  'No expenses logged this month yet.',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              )
+            else
+              _CategoryBarChart(categoryTotals: categoryTotals, currency: currency),
+            const SizedBox(height: 32),
+            Text('Last 14 Days: Net Balance', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 12),
+            _DailyNetLineChart(trend: trend),
+            const SizedBox(height: 40),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Standalone wrapper kept around in case you want analytics reachable as
+/// its own pushed route somewhere (e.g. from a settings menu) in addition
+/// to living as a swipe page on the dashboard.
+class AnalyticsScreen extends StatelessWidget {
+  const AnalyticsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Analytics')),
-      body: Consumer<WalletController>(
-        builder: (context, controller, _) {
-          final categoryTotals = controller.expenseByCategoryThisMonth;
-          final trend = controller.dailyNetTrend(days: 14);
-
-          if (controller.transactions.isEmpty) {
-            return const Center(
-              child: Text(
-                'No data yet. Add a transaction first.',
-                style: TextStyle(color: AppColors.textSecondary),
-              ),
-            );
-          }
-
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              _IncomeVsExpenseCard(
-                income: controller.monthlyIncome,
-                expense: controller.monthlyTotal,
-                balance: controller.monthlyBalance,
-                currency: currency,
-              ),
-              const SizedBox(height: 24),
-              Text('Spending by Category', style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 12),
-              if (categoryTotals.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Text(
-                    'No expenses logged this month yet.',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                )
-              else
-                _CategoryBarChart(categoryTotals: categoryTotals, currency: currency),
-              const SizedBox(height: 32),
-              Text('Last 14 Days: Net Balance', style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 12),
-              _DailyNetLineChart(trend: trend),
-              const SizedBox(height: 40),
-            ],
-          );
-        },
-      ),
+      body: const AnalyticsBody(),
     );
   }
 }

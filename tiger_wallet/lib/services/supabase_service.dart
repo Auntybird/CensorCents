@@ -164,6 +164,34 @@ class SupabaseService {
         .eq('id', transactionId);
   }
 
+  /// Lets the user fix a transaction they entered wrong. Overwrites amount,
+  /// category, and type; `ai_feedback` gets patched separately afterwards
+  /// once the "you typed it wrong the first time" roast comes back.
+  Future<TransactionModel> updateTransaction({
+    required String transactionId,
+    required double amount,
+    required String category,
+    required TransactionType type,
+  }) async {
+    final updated = await _client
+        .from('transactions')
+        .update({
+          'amount': amount,
+          'category': category,
+          'type': type.value,
+        })
+        .eq('id', transactionId)
+        .select()
+        .single();
+
+    return TransactionModel.fromJson(updated);
+  }
+
+  /// Permanently removes a transaction the user decided was a mistake.
+  Future<void> deleteTransaction(String transactionId) async {
+    await _client.from('transactions').delete().eq('id', transactionId);
+  }
+
   /// Realtime stream of the transactions table, filtered to the current user.
   /// The dashboard listens on this so the AI's scolding appears the instant
   /// the `ai_feedback` column gets patched — no manual refresh needed.
