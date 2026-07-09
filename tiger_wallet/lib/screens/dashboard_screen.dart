@@ -59,6 +59,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         amount: event.amount,
         type: event.type,
         note: event.note,
+        isCorrection: event.isCorrection,
       );
     });
   }

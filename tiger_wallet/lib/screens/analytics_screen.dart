@@ -2,20 +2,31 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import '../models/ai_verdict_stats.dart';
+import '../models/month_summary.dart';
+import '../models/transaction_model.dart';
 import '../services/wallet_controller.dart';
 import '../theme/app_theme.dart';
 
-/// Read-only analytics dashboard: income vs expense for the month, a
-/// category breakdown of spending, and a rolling daily net-balance trend.
-/// Pulls entirely from data WalletController already has in memory — no
-/// extra Supabase round-trips needed.
+/// Read-only analytics dashboard: income vs expense for the month, how
+/// often the AI approved vs was disappointed, a category breakdown, a
+/// rolling daily net-balance trend, and a full monthly overview with
+/// drill-down into any past month's transactions. Pulls entirely from data
+/// WalletController already has in memory — no extra Supabase round-trips.
 ///
 /// This is the bare content (no Scaffold/AppBar) so it can be embedded as a
 /// page inside the dashboard's swipeable PageView. [AnalyticsScreen] below
 /// wraps it in a Scaffold for standalone use (e.g. if you ever want it
 /// pushed as its own route again).
-class AnalyticsBody extends StatelessWidget {
+class AnalyticsBody extends StatefulWidget {
   const AnalyticsBody({super.key});
+
+  @override
+  State<AnalyticsBody> createState() => _AnalyticsBodyState();
+}
+
+class _AnalyticsBodyState extends State<AnalyticsBody> {
+  DateTime? _selectedMonth;
 
   @override
   Widget build(BuildContext context) {
@@ -23,9 +34,6 @@ class AnalyticsBody extends StatelessWidget {
 
     return Consumer<WalletController>(
       builder: (context, controller, _) {
-        final categoryTotals = controller.expenseByCategoryThisMonth;
-        final trend = controller.dailyNetTrend(days: 14);
-
         if (controller.transactions.isEmpty) {
           return const Center(
             child: Text(
@@ -34,6 +42,18 @@ class AnalyticsBody extends StatelessWidget {
             ),
           );
         }
+
+        final categoryTotals = controller.expenseByCategoryThisMonth;
+        final trend = controller.dailyNetTrend(days: 14);
+        final monthlySummaries = controller.monthlySummaries;
+        final verdict = controller.aiVerdictStats;
+
+        // Default to the most recent month with data.
+        final selectedMonth = _selectedMonth ?? monthlySummaries.first.month;
+        final selectedSummary = monthlySummaries.firstWhere(
+          (m) => m.matches(selectedMonth),
+          orElse: () => MonthSummary(month: selectedMonth, income: 0, expense: 0, transactions: const []),
+        );
 
         return ListView(
           padding: const EdgeInsets.all(20),
@@ -45,6 +65,12 @@ class AnalyticsBody extends StatelessWidget {
               currency: currency,
             ),
             const SizedBox(height: 24),
+            if (verdict.total > 0) ...[
+              Text('The AI\'s Verdict', style: Theme.of(context).textTheme.headlineMedium),
+              const SizedBox(height: 12),
+              _AiVerdictCard(verdict: verdict),
+              const SizedBox(height: 32),
+            ],
             Text('Spending by Category', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 12),
             if (categoryTotals.isEmpty)
@@ -61,6 +87,24 @@ class AnalyticsBody extends StatelessWidget {
             Text('Last 14 Days: Net Balance', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 12),
             _DailyNetLineChart(trend: trend),
+            const SizedBox(height: 32),
+            Text('Monthly Overview', style: Theme.of(context).textTheme.headlineMedium),
+            const SizedBox(height: 4),
+            const Text(
+              'Every transaction, split by month.',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            _MonthlyBarChart(summaries: monthlySummaries, currency: currency),
+            const SizedBox(height: 16),
+            _MonthChipRow(
+              summaries: monthlySummaries,
+              selectedMonth: selectedMonth,
+              currency: currency,
+              onSelect: (month) => setState(() => _selectedMonth = month),
+            ),
+            const SizedBox(height: 20),
+            _MonthDetailCard(summary: selectedSummary, currency: currency),
             const SizedBox(height: 40),
           ],
         );
@@ -190,6 +234,90 @@ class _StatColumn extends StatelessWidget {
           style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16),
         ),
       ],
+    );
+  }
+}
+
+/// How often the AI approved vs was disappointed, as a proportion bar plus
+/// percentages — the "report card" view of the whole judging system.
+class _AiVerdictCard extends StatelessWidget {
+  final AiVerdictStats verdict;
+
+  const _AiVerdictCard({required this.verdict});
+
+  @override
+  Widget build(BuildContext context) {
+    final approvedPercent = verdict.approvedPercent;
+    final disappointedPercent = verdict.disappointedPercent;
+    final approvedCount = verdict.approvedCount;
+    final disappointedCount = verdict.disappointedCount;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.emoji_events_rounded, size: 16, color: AppColors.savingsGreen),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Approved  ${approvedPercent.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: AppColors.savingsGreen,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text(
+                      'Disappointed  ${disappointedPercent.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: AppColors.overspendRed,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.warning_rounded, size: 16, color: AppColors.overspendRed),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                height: 14,
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: approvedCount.clamp(1, 1000000),
+                      child: Container(color: AppColors.savingsGreen),
+                    ),
+                    Expanded(
+                      flex: disappointedCount.clamp(1, 1000000),
+                      child: Container(color: AppColors.overspendRed),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$approvedCount approved · $disappointedCount disappointed, out of ${approvedCount + disappointedCount} judged entries',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -346,6 +474,268 @@ class _DailyNetLineChart extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Grouped bar chart: one pair of bars (income green, expense red) per
+/// month, oldest on the left — the classic "money in vs money out over
+/// time" view most budgeting apps lead with. Capped to the most recent 6
+/// months so it stays legible on a phone screen.
+class _MonthlyBarChart extends StatelessWidget {
+  final List<MonthSummary> summaries; // most-recent-first, per WalletController
+  final NumberFormat currency;
+
+  const _MonthlyBarChart({required this.summaries, required this.currency});
+
+  @override
+  Widget build(BuildContext context) {
+    // Chronological order (oldest -> newest) for a left-to-right timeline.
+    final months = summaries.take(6).toList().reversed.toList();
+    final maxValue = months
+        .expand((m) => [m.income, m.expense])
+        .fold<double>(0, (a, b) => a > b ? a : b);
+
+    return SizedBox(
+      height: 220,
+      child: BarChart(
+        BarChartData(
+          maxY: maxValue == 0 ? 1 : maxValue * 1.2,
+          alignment: BarChartAlignment.spaceAround,
+          gridData: const FlGridData(show: false),
+          borderData: FlBorderData(show: false),
+          barTouchData: BarTouchData(
+            touchTooltipData: BarTouchTooltipData(
+              getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                final m = months[group.x.toInt()];
+                final label = rodIndex == 0 ? 'Income' : 'Expense';
+                final value = rodIndex == 0 ? m.income : m.expense;
+                return BarTooltipItem(
+                  '${DateFormat.yMMM().format(m.month)}\n$label: ${currency.format(value)}',
+                  const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                );
+              },
+            ),
+          ),
+          titlesData: FlTitlesData(
+            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                getTitlesWidget: (value, meta) {
+                  final index = value.toInt();
+                  if (index < 0 || index >= months.length) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      DateFormat.MMM().format(months[index].month),
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          barGroups: [
+            for (int i = 0; i < months.length; i++)
+              BarChartGroupData(
+                x: i,
+                barRods: [
+                  BarChartRodData(
+                    toY: months[i].income,
+                    color: AppColors.savingsGreen,
+                    width: 10,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  BarChartRodData(
+                    toY: months[i].expense,
+                    color: AppColors.overspendRed,
+                    width: 10,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ],
+                barsSpace: 4,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Horizontally scrollable row of month chips ("Jul 2026", "Jun 2026", ...)
+/// — tap one to drive the drill-down section below.
+class _MonthChipRow extends StatelessWidget {
+  final List<MonthSummary> summaries; // most-recent-first
+  final DateTime selectedMonth;
+  final NumberFormat currency;
+  final ValueChanged<DateTime> onSelect;
+
+  const _MonthChipRow({
+    required this.summaries,
+    required this.selectedMonth,
+    required this.currency,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 68,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: summaries.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final summary = summaries[index];
+          final isSelected = summary.matches(selectedMonth);
+          final netColor = summary.net >= 0 ? AppColors.savingsGreen : AppColors.overspendRed;
+
+          return GestureDetector(
+            onTap: () => onSelect(summary.month),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: isSelected ? AppColors.surfaceElevated : AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: isSelected ? AppColors.savingsGreen : AppColors.surfaceElevated,
+                  width: 1.5,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    DateFormat.yMMM().format(summary.month),
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${summary.net >= 0 ? '+' : '-'}${currency.format(summary.net.abs())}',
+                    style: TextStyle(color: netColor, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Drill-down for whichever month is selected: net summary, a category
+/// breakdown scoped to that month, and a capped list of that month's
+/// transactions (full detail/editing still lives on the Transactions page).
+class _MonthDetailCard extends StatelessWidget {
+  final MonthSummary summary;
+  final NumberFormat currency;
+
+  const _MonthDetailCard({required this.summary, required this.currency});
+
+  static const int _maxTransactionsShown = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final netColor = summary.net >= 0 ? AppColors.savingsGreen : AppColors.overspendRed;
+    final shown = summary.transactions.take(_maxTransactionsShown).toList();
+    final remaining = summary.transactionCount - shown.length;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  DateFormat.yMMMM().format(summary.month),
+                  style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                Text(
+                  '${summary.net >= 0 ? '+' : '-'}${currency.format(summary.net.abs())}',
+                  style: TextStyle(color: netColor, fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${summary.transactionCount} transaction${summary.transactionCount == 1 ? '' : 's'} · '
+              '${currency.format(summary.income)} in · ${currency.format(summary.expense)} out',
+              style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            if (shown.isEmpty)
+              const Text(
+                'No transactions this month.',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              )
+            else ...[
+              for (final tx in shown) _MonthDetailRow(transaction: tx, currency: currency),
+              if (remaining > 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  '+$remaining more — see the Transactions page for the full list.',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontStyle: FontStyle.italic),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact, read-only row for one transaction inside the month drill-down.
+class _MonthDetailRow extends StatelessWidget {
+  final TransactionModel transaction;
+  final NumberFormat currency;
+
+  const _MonthDetailRow({required this.transaction, required this.currency});
+
+  @override
+  Widget build(BuildContext context) {
+    final isIncome = transaction.isIncome;
+    final amountColor = isIncome ? AppColors.savingsGreen : AppColors.textPrimary;
+    final signedAmount = '${isIncome ? '+' : '-'}${currency.format(transaction.amount)}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  transaction.category,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+                ),
+                Text(
+                  DateFormat.MMMd().format(transaction.timestamp),
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            signedAmount,
+            style: TextStyle(color: amountColor, fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+        ],
       ),
     );
   }

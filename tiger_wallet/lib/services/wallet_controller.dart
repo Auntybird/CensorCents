@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../models/ai_verdict_stats.dart';
 import '../models/feedback_event.dart';
+import '../models/month_summary.dart';
 import '../models/transaction_model.dart';
 import '../models/user_profile_model.dart';
 import 'groq_service.dart';
@@ -128,6 +130,60 @@ class WalletController extends ChangeNotifier {
     return entries;
   }
 
+  /// Sum of expense amounts for an arbitrary month, grouped by category —
+  /// generalizes [expenseByCategoryThisMonth] so the analytics drill-down
+  /// can chart spending for any past month, not just the current one.
+  Map<String, double> expenseByCategoryForMonth(DateTime month) {
+    final start = DateTime(month.year, month.month, 1);
+    final end = DateTime(month.year, month.month + 1, 1);
+    final totals = <String, double>{};
+
+    for (final tx in transactions) {
+      if (tx.isExpense && !tx.timestamp.isBefore(start) && tx.timestamp.isBefore(end)) {
+        totals[tx.category] = (totals[tx.category] ?? 0) + tx.amount;
+      }
+    }
+
+    final sorted = totals.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return {for (final e in sorted) e.key: e.value};
+  }
+
+  /// Every transaction grouped into calendar months, most recent month
+  /// first — the same "gather everything, split by month" view other
+  /// budgeting apps show. Each [MonthSummary] carries that month's income,
+  /// expense, and the transactions themselves for drill-down.
+  List<MonthSummary> get monthlySummaries {
+    final grouped = <DateTime, List<TransactionModel>>{};
+
+    for (final tx in transactions) {
+      final key = DateTime(tx.timestamp.year, tx.timestamp.month, 1);
+      grouped.putIfAbsent(key, () => []).add(tx);
+    }
+
+    final summaries = grouped.entries.map((entry) {
+      final txs = entry.value..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final income = txs.where((t) => t.isIncome).fold(0.0, (sum, t) => sum + t.amount);
+      final expense = txs.where((t) => t.isExpense).fold(0.0, (sum, t) => sum + t.amount);
+      return MonthSummary(month: entry.key, income: income, expense: expense, transactions: txs);
+    }).toList();
+
+    summaries.sort((a, b) => b.month.compareTo(a.month));
+    return summaries;
+  }
+
+  /// How often the AI has approved vs been disappointed, across every
+  /// judged transaction (submits and edit/delete corrections alike).
+  AiVerdictStats get aiVerdictStats {
+    var approved = 0;
+    var disappointed = 0;
+    for (final tx in transactions) {
+      if (tx.sentiment == TransactionSentiment.approved) approved++;
+      if (tx.sentiment == TransactionSentiment.disappointed) disappointed++;
+    }
+    return AiVerdictStats(approvedCount: approved, disappointedCount: disappointed);
+  }
+
   /// Lets the user edit their own budget ceiling / persona from settings.
   /// Refreshes [profile] (and the derived budget getters) on success.
   Future<void> updateBudget({
@@ -211,9 +267,20 @@ class WalletController extends ChangeNotifier {
         note: note,
       );
 
+      // Same rule the UI already uses for red/green accents: income is
+      // always a grudging approval, expenses depend on whether this entry
+      // pushed the user over budget. Recorded once here rather than
+      // re-derived from the free-text critique later.
+      final sentiment = type == TransactionType.income
+          ? TransactionSentiment.approved
+          : (monthlyTotal > profile!.budgetThreshold
+              ? TransactionSentiment.disappointed
+              : TransactionSentiment.approved);
+
       await _db.updateTransactionFeedback(
         transactionId: inserted.id,
         feedback: feedback,
+        sentiment: sentiment,
       );
 
       _feedbackEventsController.add(FeedbackEvent(
@@ -268,6 +335,9 @@ class WalletController extends ChangeNotifier {
       await _db.updateTransactionFeedback(
         transactionId: original.id,
         feedback: roast,
+        // Corrections are always mockery, never praise — the mistake itself
+        // is the point, regardless of how the fixed entry compares to budget.
+        sentiment: TransactionSentiment.disappointed,
       );
 
       _feedbackEventsController.add(FeedbackEvent(

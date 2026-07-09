@@ -155,14 +155,20 @@ class SupabaseService {
     return TransactionModel.fromJson(inserted);
   }
 
-  /// Step 4 of the workflow: patch the same row with the AI's critique text.
+  /// Step 4 of the workflow: patch the same row with the AI's critique text
+  /// (and, from here on, its recorded sentiment — approved or disappointed —
+  /// which is what powers the "AI verdict" percentage on analytics).
   Future<void> updateTransactionFeedback({
     required String transactionId,
     required String feedback,
+    TransactionSentiment? sentiment,
   }) async {
     await _client
         .from('transactions')
-        .update({'ai_feedback': feedback})
+        .update({
+          'ai_feedback': feedback,
+          if (sentiment != null) 'sentiment': sentiment.value,
+        })
         .eq('id', transactionId);
   }
 

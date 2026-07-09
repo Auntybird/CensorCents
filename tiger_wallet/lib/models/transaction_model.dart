@@ -18,6 +18,32 @@ enum TransactionType {
   }
 }
 
+/// The AI's verdict on an entry, recorded at the moment the critique is
+/// generated (see WalletController.submitTransaction/editTransaction) rather
+/// than re-derived later from the free-text `aiFeedback` string — sentiment
+/// analysis on generated text is unreliable and unnecessary when we already
+/// know the rule that decided the tone (over/under budget for expenses,
+/// always grudging approval for income, always disappointed for a
+/// correction). This is what powers the "approved vs disappointed" stat on
+/// the analytics dashboard.
+enum TransactionSentiment {
+  approved,
+  disappointed;
+
+  String get value => name;
+
+  static TransactionSentiment? fromValue(String? raw) {
+    switch (raw) {
+      case 'approved':
+        return TransactionSentiment.approved;
+      case 'disappointed':
+        return TransactionSentiment.disappointed;
+      default:
+        return null;
+    }
+  }
+}
+
 /// Maps directly to a row in `public.transactions`.
 ///
 /// `aiFeedback` starts null (row just inserted) and is patched in later once
@@ -31,6 +57,9 @@ enum TransactionType {
 /// logging the entry (e.g. "birthday dinner for my sister") — it's passed
 /// to Groq so the critique can reference specifics instead of staying
 /// generic to just the category.
+///
+/// `sentiment` is null until the AI has weighed in (i.e. same lifecycle as
+/// `aiFeedback` — patched in together).
 class TransactionModel {
   final String id;
   final String userId;
@@ -40,6 +69,7 @@ class TransactionModel {
   final String? aiFeedback;
   final TransactionType type;
   final String? note;
+  final TransactionSentiment? sentiment;
 
   const TransactionModel({
     required this.id,
@@ -50,6 +80,7 @@ class TransactionModel {
     this.aiFeedback,
     this.type = TransactionType.expense,
     this.note,
+    this.sentiment,
   });
 
   bool get isIncome => type == TransactionType.income;
@@ -67,6 +98,7 @@ class TransactionModel {
       // which fromValue() safely treats as an expense.
       type: TransactionType.fromValue(json['type'] as String?),
       note: json['note'] as String?,
+      sentiment: TransactionSentiment.fromValue(json['sentiment'] as String?),
     );
   }
 
@@ -77,10 +109,10 @@ class TransactionModel {
   }
 
   /// Payload used when creating a brand-new transaction (no id/feedback yet —
-  /// id is generated server-side, feedback is patched in after the AI call).
-  /// `note` is sent as null rather than omitted when blank, so clearing a
-  /// note on edit actually clears it in the database instead of leaving the
-  /// old value behind.
+  /// id is generated server-side, feedback+sentiment are patched in after
+  /// the AI call). `note` is sent as null rather than omitted when blank, so
+  /// clearing a note on edit actually clears it in the database instead of
+  /// leaving the old value behind.
   Map<String, dynamic> toInsertJson() => {
         'user_id': userId,
         'amount': amount,
@@ -90,7 +122,12 @@ class TransactionModel {
         'note': (note == null || note!.trim().isEmpty) ? null : note!.trim(),
       };
 
-  TransactionModel copyWith({String? aiFeedback, TransactionType? type, String? note}) {
+  TransactionModel copyWith({
+    String? aiFeedback,
+    TransactionType? type,
+    String? note,
+    TransactionSentiment? sentiment,
+  }) {
     return TransactionModel(
       id: id,
       userId: userId,
@@ -100,6 +137,7 @@ class TransactionModel {
       aiFeedback: aiFeedback ?? this.aiFeedback,
       type: type ?? this.type,
       note: note ?? this.note,
+      sentiment: sentiment ?? this.sentiment,
     );
   }
 }

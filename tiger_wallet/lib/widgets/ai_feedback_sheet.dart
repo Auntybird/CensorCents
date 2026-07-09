@@ -6,9 +6,9 @@ import '../theme/app_theme.dart';
 /// critique the moment `ai_feedback` lands on a transaction row.
 ///
 /// [isOverBudget] controls the accent color for EXPENSE entries (red scold
-/// vs green praise). INCOME entries always render in green since money
-/// coming in is never itself a budget violation — the actual wording still
-/// always comes from Groq.
+/// vs green praise). INCOME entries render in green UNLESS [isCorrection]
+/// is true — an edit/delete roast is always mockery regardless of whether
+/// the entry being corrected was income, so it always renders red/dissatisfied.
 class AiFeedbackSheet extends StatelessWidget {
   final String feedbackText;
   final bool isOverBudget;
@@ -16,6 +16,7 @@ class AiFeedbackSheet extends StatelessWidget {
   final double amount;
   final TransactionType type;
   final String? note;
+  final bool isCorrection;
 
   const AiFeedbackSheet({
     super.key,
@@ -25,6 +26,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required this.amount,
     this.type = TransactionType.expense,
     this.note,
+    this.isCorrection = false,
   });
 
   static Future<void> show(
@@ -35,6 +37,7 @@ class AiFeedbackSheet extends StatelessWidget {
     required double amount,
     TransactionType type = TransactionType.expense,
     String? note,
+    bool isCorrection = false,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -47,17 +50,20 @@ class AiFeedbackSheet extends StatelessWidget {
         amount: amount,
         type: type,
         note: note,
+        isCorrection: isCorrection,
       ),
     );
   }
 
-  bool get _isIncome => type == TransactionType.income;
+  bool get _isIncome => type == TransactionType.income && !isCorrection;
 
   @override
   Widget build(BuildContext context) {
-    final accent = _isIncome
-        ? AppColors.savingsGreen
-        : (isOverBudget ? AppColors.overspendRed : AppColors.savingsGreen);
+    final accent = isCorrection
+        ? AppColors.overspendRed
+        : (_isIncome
+            ? AppColors.savingsGreen
+            : (isOverBudget ? AppColors.overspendRed : AppColors.savingsGreen));
 
     // TweenAnimationBuilder gives a nice pop/slide-in without needing a
     // dedicated AnimationController + StatefulWidget boilerplate.
@@ -93,16 +99,20 @@ class AiFeedbackSheet extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  _isIncome
-                      ? Icons.trending_up_rounded
-                      : (isOverBudget ? Icons.warning_rounded : Icons.emoji_events_rounded),
+                  isCorrection
+                      ? Icons.sentiment_very_dissatisfied_rounded
+                      : (_isIncome
+                          ? Icons.trending_up_rounded
+                          : (isOverBudget ? Icons.warning_rounded : Icons.emoji_events_rounded)),
                   color: accent,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _isIncome
-                      ? 'CENSORCENTS NOTES YOUR INCOME'
-                      : (isOverBudget ? 'CENSORCENTS IS DISAPPOINTED' : 'CENSORCENTS APPROVES'),
+                  isCorrection
+                      ? 'CENSORCENTS IS UNIMPRESSED'
+                      : (_isIncome
+                          ? 'CENSORCENTS NOTES YOUR INCOME'
+                          : (isOverBudget ? 'CENSORCENTS IS DISAPPOINTED' : 'CENSORCENTS APPROVES')),
                   style: TextStyle(
                     color: accent,
                     fontWeight: FontWeight.bold,
