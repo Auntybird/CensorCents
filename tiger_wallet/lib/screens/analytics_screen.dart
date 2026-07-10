@@ -82,7 +82,11 @@ class _AnalyticsBodyState extends State<AnalyticsBody> {
                 ),
               )
             else
-              _CategoryBarChart(categoryTotals: categoryTotals, currency: currency),
+              _CategoryBarChart(
+                categoryTotals: categoryTotals,
+                currency: currency,
+                categoryLimit: controller.categoryBudgetLimit,
+              ),
             const SizedBox(height: 32),
             Text('Last 14 Days: Net Balance', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 12),
@@ -327,13 +331,20 @@ class _AiVerdictCard extends StatelessWidget {
 class _CategoryBarChart extends StatelessWidget {
   final Map<String, double> categoryTotals;
   final NumberFormat currency;
+  final double? Function(String category)? categoryLimit;
 
-  const _CategoryBarChart({required this.categoryTotals, required this.currency});
+  const _CategoryBarChart({required this.categoryTotals, required this.currency, this.categoryLimit});
 
   @override
   Widget build(BuildContext context) {
     final entries = categoryTotals.entries.take(6).toList();
     final maxValue = entries.map((e) => e.value).fold<double>(0, (a, b) => a > b ? a : b);
+
+    Color barColorFor(String category, double spent) {
+      final limit = categoryLimit?.call(category);
+      if (limit == null) return AppColors.textSecondary; // no cap set — neutral color
+      return spent > limit ? AppColors.overspendRed : AppColors.savingsGreen;
+    }
 
     return SizedBox(
       height: 240,
@@ -383,7 +394,7 @@ class _CategoryBarChart extends StatelessWidget {
                 barRods: [
                   BarChartRodData(
                     toY: entries[i].value,
-                    color: AppColors.overspendRed,
+                    color: barColorFor(entries[i].key, entries[i].value),
                     width: 22,
                     borderRadius: BorderRadius.circular(4),
                   ),

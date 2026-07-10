@@ -1,4 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/category_budget.dart';
+import '../models/savings_goal.dart';
 import '../models/transaction_model.dart';
 import '../models/user_profile_model.dart';
 
@@ -215,5 +217,111 @@ class SupabaseService {
         .eq('user_id', uid)
         .order('timestamp', ascending: false)
         .map((rows) => rows.map(TransactionModel.fromJson).toList());
+  }
+
+  // --------------------------------------------------------------------
+  // SAVINGS GOALS
+  // --------------------------------------------------------------------
+
+  Future<List<SavingsGoal>> fetchGoals() async {
+    final uid = currentUser?.id;
+    if (uid == null) throw StateError('No authenticated user.');
+
+    final rows = await _client
+        .from('goals')
+        .select()
+        .eq('user_id', uid)
+        .order('created_at', ascending: false);
+
+    return (rows as List).map((r) => SavingsGoal.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  Future<SavingsGoal> insertGoal({
+    required String name,
+    required double targetAmount,
+    DateTime? targetDate,
+  }) async {
+    final uid = currentUser?.id;
+    if (uid == null) throw StateError('No authenticated user.');
+
+    final draft = SavingsGoal(
+      id: '',
+      userId: uid,
+      name: name,
+      targetAmount: targetAmount,
+      targetDate: targetDate,
+      createdAt: DateTime.now(),
+    );
+
+    final inserted = await _client.from('goals').insert(draft.toInsertJson()).select().single();
+    return SavingsGoal.fromJson(inserted);
+  }
+
+  Future<void> deleteGoal(String goalId) async {
+    await _client.from('goals').delete().eq('id', goalId);
+  }
+
+  // --------------------------------------------------------------------
+  // CATEGORY BUDGETS
+  // --------------------------------------------------------------------
+
+  Future<List<CategoryBudget>> fetchCategoryBudgets() async {
+    final uid = currentUser?.id;
+    if (uid == null) throw StateError('No authenticated user.');
+
+    final rows = await _client.from('category_budgets').select().eq('user_id', uid);
+    return (rows as List).map((r) => CategoryBudget.fromJson(r as Map<String, dynamic>)).toList();
+  }
+
+  /// One row per (user, category) — `upsert` so re-saving an existing
+  /// category's limit updates it instead of creating a duplicate. Requires
+  /// a unique constraint on (user_id, category) — see the schema note.
+  Future<void> upsertCategoryBudget({
+    required String category,
+    required double monthlyLimit,
+  }) async {
+    final uid = currentUser?.id;
+    if (uid == null) throw StateError('No authenticated user.');
+
+    await _client
+        .from('category_budgets')
+        .upsert(
+          CategoryBudget(id: '', userId: uid, category: category, monthlyLimit: monthlyLimit)
+              .toUpsertJson(uid),
+          onConflict: 'user_id,category',
+        );
+  }
+
+  Future<void> deleteCategoryBudget(String categoryBudgetId) async {
+    await _client.from('category_budgets').delete().eq('id', categoryBudgetId);
+  }
+
+  // --------------------------------------------------------------------
+  // DATA EXPORT / ACCOUNT DELETION
+  // --------------------------------------------------------------------
+
+  /// Everything needed for a full data export — kept as one call so the
+  /// export screen only needs a single loading state.
+  Future<List<TransactionModel>> fetchAllDataForExport() => fetchTransactions();
+
+  /// Deletes all of the signed-in user's app data (transactions, goals,
+  /// category budgets, profile row) and signs them out.
+  ///
+  /// This does NOT delete the underlying Supabase Auth account/credentials —
+  /// that requires the `service_role` key via the Admin API, which must
+  /// never be embedded in a client app (it bypasses RLS entirely). Doing
+  /// that safely needs a server-side piece (e.g. a Supabase Edge Function
+  /// the client calls, which then uses the service role internally). What's
+  /// implemented here is the part that's safe to do straight from the
+  /// client: wipe every row that belongs to the user.
+  Future<void> deleteAllUserData() async {
+    final uid = currentUser?.id;
+    if (uid == null) throw StateError('No authenticated user.');
+
+    await _client.from('transactions').delete().eq('user_id', uid);
+    await _client.from('goals').delete().eq('user_id', uid);
+    await _client.from('category_budgets').delete().eq('user_id', uid);
+    await _client.from('users').delete().eq('id', uid);
+    await signOut();
   }
 }

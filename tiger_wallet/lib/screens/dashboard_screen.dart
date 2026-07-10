@@ -3,15 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../models/feedback_event.dart';
+import '../models/savings_goal.dart';
 import '../models/transaction_model.dart';
 import '../services/supabase_service.dart';
 import '../services/wallet_controller.dart';
 import '../theme/app_theme.dart';
+import '../widgets/add_goal_sheet.dart';
 import '../widgets/add_transaction_sheet.dart';
 import '../widgets/ai_feedback_sheet.dart';
 import '../widgets/edit_budget_sheet.dart';
 import '../widgets/stern_avatar.dart';
 import 'analytics_screen.dart';
+import 'settings_screen.dart';
 
 const List<String> _kPageTitles = ['CensorCents', 'Transactions', 'Analytics'];
 
@@ -156,6 +159,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openAddGoalSheet() async {
+    final controller = context.read<WalletController>();
+    final result = await AddGoalSheet.show(context);
+    if (result == null) return;
+
+    final (name, targetAmount, targetDate) = result;
+    await controller.addGoal(name: name, targetAmount: targetAmount, targetDate: targetDate);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<WalletController>(
@@ -171,6 +183,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: Text(_kPageTitles[_currentPage]),
             actions: [
               IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                tooltip: 'Settings',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                ),
+              ),
+              IconButton(
                 icon: const Icon(Icons.logout),
                 tooltip: 'Sign out',
                 onPressed: () => SupabaseService.instance.signOut(),
@@ -185,6 +204,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 controller: controller,
                 currency: _currency,
                 onEditBudget: _openEditBudgetSheet,
+                onAddGoal: _openAddGoalSheet,
               ),
               _TransactionsPage(
                 controller: controller,
@@ -246,11 +266,13 @@ class _HomePage extends StatelessWidget {
   final WalletController controller;
   final NumberFormat currency;
   final VoidCallback onEditBudget;
+  final VoidCallback onAddGoal;
 
   const _HomePage({
     required this.controller,
     required this.currency,
     required this.onEditBudget,
+    required this.onAddGoal,
   });
 
   @override
@@ -270,7 +292,7 @@ class _HomePage extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 24),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.overspendRed.withOpacity(0.1),
+                color: AppColors.overspendRed.withValues(alpha: 0.1),
                 border: Border.all(color: AppColors.overspendRed, width: 1.5),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -302,6 +324,57 @@ class _HomePage extends StatelessWidget {
             currency: currency,
             onEdit: onEditBudget,
           ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: controller.isRoasting ? null : controller.roastMeNow,
+              icon: controller.isRoasting
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.overspendRed),
+                    )
+                  : const Icon(Icons.local_fire_department_outlined, size: 18, color: AppColors.overspendRed),
+              label: Text(
+                controller.isRoasting ? 'Judging...' : 'Roast Me Now',
+                style: const TextStyle(color: AppColors.overspendRed),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppColors.overspendRed),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Savings Goals', style: Theme.of(context).textTheme.headlineMedium),
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline, color: AppColors.savingsGreen),
+                onPressed: onAddGoal,
+                tooltip: 'Add goal',
+              ),
+            ],
+          ),
+          if (controller.goals.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'No goals yet. Ambitious of you to skip this.',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+            )
+          else
+            ...controller.goals.map((goal) => _GoalCard(
+                  goal: goal,
+                  progress: controller.goalProgress(goal),
+                  currency: currency,
+                  reached: controller.isGoalReached(goal),
+                  onClaim: () => controller.celebrateGoalReached(goal),
+                  onDelete: () => controller.removeGoal(goal),
+                )),
           const SizedBox(height: 24),
           const Center(
             child: Padding(
@@ -402,6 +475,92 @@ class _TransactionsPage extends StatelessWidget {
 
 /// Card showing spend-vs-threshold with a color-coded progress bar, plus an
 /// income/expense/balance breakdown and a tap target to edit the budget.
+/// One savings goal: progress bar, amount toward target, and either a
+/// "Claim" button (once reached, to trigger the AI's grudging credit) or a
+/// delete button. Claiming is a manual tap rather than auto-detected on
+/// rebuild — auto-popping a sheet based on scanning state during build is
+/// exactly the pattern that caused the transaction-feedback popup bug
+/// earlier, so goal celebration deliberately avoids it.
+class _GoalCard extends StatelessWidget {
+  final SavingsGoal goal;
+  final double progress;
+  final NumberFormat currency;
+  final bool reached;
+  final VoidCallback onClaim;
+  final VoidCallback onDelete;
+
+  const _GoalCard({
+    required this.goal,
+    required this.progress,
+    required this.currency,
+    required this.reached,
+    required this.onClaim,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = goal.targetAmount <= 0 ? 0.0 : (progress / goal.targetAmount).clamp(0.0, 1.0);
+    final accent = reached ? AppColors.savingsGreen : AppColors.textSecondary;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    goal.name,
+                    style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 18, color: AppColors.textSecondary),
+                  onPressed: onDelete,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: ratio,
+                minHeight: 8,
+                backgroundColor: AppColors.surfaceElevated,
+                valueColor: AlwaysStoppedAnimation(accent),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${currency.format(progress)} of ${currency.format(goal.targetAmount)}',
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                ),
+                if (reached)
+                  TextButton.icon(
+                    onPressed: onClaim,
+                    icon: const Icon(Icons.emoji_events_outlined, size: 16, color: AppColors.savingsGreen),
+                    label: const Text('Claim', style: TextStyle(color: AppColors.savingsGreen, fontSize: 12)),
+                    style: TextButton.styleFrom(padding: EdgeInsets.zero, minimumSize: const Size(0, 0)),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _BudgetSummaryCard extends StatelessWidget {
   final double monthlyTotal;
   final double monthlyIncome;

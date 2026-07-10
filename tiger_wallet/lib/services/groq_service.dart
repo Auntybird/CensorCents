@@ -202,4 +202,111 @@ Mock them for needing to fix their own mistake, following your correction-mode i
     final content = choices.first['message']['content'] as String?;
     return (content ?? "...").trim();
   }
+
+  /// Reacts to a savings goal being created or reached. Reuses the main
+  /// persona prompt with a small extra instruction rather than a whole new
+  /// system prompt, since the tone (grudging, cousin-comparisons, never
+  /// insulting the person) is identical — only the subject changes.
+  Future<String> critiqueGoal({
+    required bool justReached,
+    required String goalName,
+    required double targetAmount,
+  }) async {
+    if (_apiKey.isEmpty) {
+      throw StateError('GROQ_API_KEY missing — check your .env file.');
+    }
+
+    final userPrompt = justReached
+        ? 'The user just REACHED their savings goal "$goalName" of \$${targetAmount.toStringAsFixed(2)}. Give grudging credit — this is one of the only times real (if backhanded) praise is warranted — but immediately pivot to demanding they set a bigger goal next, following your system instructions.'
+        : 'The user just CREATED a new savings goal called "$goalName" targeting \$${targetAmount.toStringAsFixed(2)}. React with skepticism about whether they will actually stick to it, following your system instructions.';
+
+    final response = await http.post(
+      Uri.parse(_endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      },
+      body: jsonEncode({
+        'model': _model,
+        'messages': [
+          {'role': 'system', 'content': _systemPrompt},
+          {'role': 'user', 'content': userPrompt},
+        ],
+        'temperature': 0.8,
+        'max_tokens': 150,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Groq API error (${response.statusCode}): ${response.body}');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = decoded['choices'] as List?;
+    if (choices == null || choices.isEmpty) {
+      throw Exception('Groq API returned no choices.');
+    }
+
+    return ((choices.first['message']['content'] as String?) ?? '...').trim();
+  }
+
+  /// The "Roast me now" button: an on-demand, big-picture critique of the
+  /// month so far rather than a reaction to one specific entry. The caller
+  /// (WalletController) is responsible for rate-limiting this, since it's a
+  /// real API call the user can trigger manually as often as they tap it.
+  Future<String> critiqueOverallStanding({
+    required double monthlyIncome,
+    required double monthlyExpense,
+    required double budgetThreshold,
+    required String topCategory,
+  }) async {
+    if (_apiKey.isEmpty) {
+      throw StateError('GROQ_API_KEY missing — check your .env file.');
+    }
+
+    final overBy = monthlyExpense - budgetThreshold;
+    final statusLine = overBy > 0
+        ? 'They are OVER budget by \$${overBy.toStringAsFixed(2)} this month.'
+        : 'They are still UNDER budget, with \$${(-overBy).toStringAsFixed(2)} of headroom left.';
+
+    final userPrompt = '''
+The user just tapped a button asking you to review their overall standing for the month, unprompted by any specific transaction:
+- Income this month: \$${monthlyIncome.toStringAsFixed(2)}
+- Expenses this month: \$${monthlyExpense.toStringAsFixed(2)}
+- Budget threshold: \$${budgetThreshold.toStringAsFixed(2)}
+- $statusLine
+- Biggest spending category this month: $topCategory
+
+Give your overall verdict on how they're doing this month as a whole, following your system instructions.
+''';
+
+    final response = await http.post(
+      Uri.parse(_endpoint),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      },
+      body: jsonEncode({
+        'model': _model,
+        'messages': [
+          {'role': 'system', 'content': _systemPrompt},
+          {'role': 'user', 'content': userPrompt},
+        ],
+        'temperature': 0.8,
+        'max_tokens': 200,
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Groq API error (${response.statusCode}): ${response.body}');
+    }
+
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final choices = decoded['choices'] as List?;
+    if (choices == null || choices.isEmpty) {
+      throw Exception('Groq API returned no choices.');
+    }
+
+    return ((choices.first['message']['content'] as String?) ?? '...').trim();
+  }
 }

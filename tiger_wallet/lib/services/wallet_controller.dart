@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/ai_verdict_stats.dart';
+import '../models/category_budget.dart';
 import '../models/feedback_event.dart';
 import '../models/month_summary.dart';
+import '../models/savings_goal.dart';
 import '../models/transaction_model.dart';
 import '../models/user_profile_model.dart';
 import 'groq_service.dart';
@@ -29,11 +31,15 @@ class WalletController extends ChangeNotifier {
 
   UserProfile? profile;
   List<TransactionModel> transactions;
+  List<SavingsGoal> goals = [];
+  List<CategoryBudget> categoryBudgets = [];
   double monthlyTotal = 0; // expenses only
   double monthlyIncome = 0;
   bool isLoading = false;
   bool isSubmitting = false;
   bool isUpdatingBudget = false;
+  bool isRoasting = false;
+  DateTime? _lastRoastAt;
   String? errorMessage;
 
   StreamSubscription<List<TransactionModel>>? _txSub;
@@ -184,6 +190,36 @@ class WalletController extends ChangeNotifier {
     return AiVerdictStats(approvedCount: approved, disappointedCount: disappointed);
   }
 
+  /// Progress toward a savings goal, derived rather than tracked separately:
+  /// the net balance (income − expense) accumulated since the goal was
+  /// created, clamped to [0, target]. There's no separate "contribute to
+  /// goal" flow — just keep your monthly balance positive and it counts.
+  double goalProgress(SavingsGoal goal) {
+    double net = 0;
+    for (final tx in transactions) {
+      if (tx.timestamp.isBefore(goal.createdAt)) continue;
+      net += tx.isIncome ? tx.amount : -tx.amount;
+    }
+    return net.clamp(0, goal.targetAmount);
+  }
+
+  bool isGoalReached(SavingsGoal goal) => goalProgress(goal) >= goal.targetAmount;
+
+  /// This month's spend for [category] against its configured cap, if any.
+  /// Null means the user hasn't set a limit for that category.
+  double? categoryBudgetLimit(String category) {
+    for (final b in categoryBudgets) {
+      if (b.category == category) return b.monthlyLimit;
+    }
+    return null;
+  }
+
+  bool isCategoryOverBudget(String category) {
+    final limit = categoryBudgetLimit(category);
+    if (limit == null) return false;
+    return (expenseByCategoryThisMonth[category] ?? 0) > limit;
+  }
+
   /// Lets the user edit their own budget ceiling / persona from settings.
   /// Refreshes [profile] (and the derived budget getters) on success.
   Future<void> updateBudget({
@@ -219,6 +255,8 @@ class WalletController extends ChangeNotifier {
       transactions = await _db.fetchTransactions();
       monthlyTotal = await _db.fetchCurrentMonthTotal();
       monthlyIncome = await _db.fetchCurrentMonthIncome();
+      goals = await _db.fetchGoals();
+      categoryBudgets = await _db.fetchCategoryBudgets();
 
       _txSub?.cancel();
       _txSub = _db.watchTransactions().listen((rows) {
@@ -386,6 +424,169 @@ class WalletController extends ChangeNotifier {
         note: transaction.note,
         isCorrection: true,
       ));
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Creates a savings goal and pops a skeptical AI reaction to it.
+  Future<void> addGoal({
+    required String name,
+    required double targetAmount,
+    DateTime? targetDate,
+  }) async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      final goal = await _db.insertGoal(name: name, targetAmount: targetAmount, targetDate: targetDate);
+      goals = [goal, ...goals];
+
+      final reaction = await _ai.critiqueGoal(
+        justReached: false,
+        goalName: name,
+        targetAmount: targetAmount,
+      );
+
+      _feedbackEventsController.add(FeedbackEvent(
+        message: reaction,
+        category: 'Savings Goal: $name',
+        amount: targetAmount,
+        type: TransactionType.income,
+        isCorrection: false,
+      ));
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeGoal(SavingsGoal goal) async {
+    try {
+      await _db.deleteGoal(goal.id);
+      goals = goals.where((g) => g.id != goal.id).toList();
+      notifyListeners();
+    } catch (e) {
+      errorMessage = e.toString();
+      notifyListeners();
+    }
+  }
+
+  /// Call this right after [goalProgress] crosses the target (the UI is
+  /// responsible for detecting that transition) to get the "you actually
+  /// did it" popup — the rare moment this AI gives real credit.
+  Future<void> celebrateGoalReached(SavingsGoal goal) async {
+    try {
+      final reaction = await _ai.critiqueGoal(
+        justReached: true,
+        goalName: goal.name,
+        targetAmount: goal.targetAmount,
+      );
+      _feedbackEventsController.add(FeedbackEvent(
+        message: reaction,
+        category: 'Goal Reached: ${goal.name}',
+        amount: goal.targetAmount,
+        type: TransactionType.income,
+        isCorrection: false,
+      ));
+    } catch (e) {
+      errorMessage = e.toString();
+      notifyListeners();
+    }
+  }
+
+  Future<void> saveCategoryBudget({required String category, required double monthlyLimit}) async {
+    isUpdatingBudget = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _db.upsertCategoryBudget(category: category, monthlyLimit: monthlyLimit);
+      categoryBudgets = await _db.fetchCategoryBudgets();
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isUpdatingBudget = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeCategoryBudget(CategoryBudget budget) async {
+    try {
+      await _db.deleteCategoryBudget(budget.id);
+      categoryBudgets = categoryBudgets.where((b) => b.id != budget.id).toList();
+      notifyListeners();
+    } catch (e) {
+      errorMessage = e.toString();
+      notifyListeners();
+    }
+  }
+
+  /// "Roast me now": an on-demand, whole-month critique triggered by a
+  /// button rather than a transaction. Rate-limited client-side to one call
+  /// per 30 seconds since each tap is a real Groq API call the user could
+  /// otherwise spam — worth knowing if you're on Groq's free tier.
+  static const Duration roastCooldown = Duration(seconds: 30);
+
+  Duration? get roastCooldownRemaining {
+    if (_lastRoastAt == null) return null;
+    final elapsed = DateTime.now().difference(_lastRoastAt!);
+    if (elapsed >= roastCooldown) return null;
+    return roastCooldown - elapsed;
+  }
+
+  Future<void> roastMeNow() async {
+    if (profile == null || roastCooldownRemaining != null) return;
+    isRoasting = true;
+    errorMessage = null;
+    notifyListeners();
+
+    try {
+      final topCategory = expenseByCategoryThisMonth.keys.isEmpty
+          ? 'nothing yet'
+          : expenseByCategoryThisMonth.keys.first;
+
+      final roast = await _ai.critiqueOverallStanding(
+        monthlyIncome: monthlyIncome,
+        monthlyExpense: monthlyTotal,
+        budgetThreshold: profile!.budgetThreshold,
+        topCategory: topCategory,
+      );
+
+      _lastRoastAt = DateTime.now();
+
+      _feedbackEventsController.add(FeedbackEvent(
+        message: roast,
+        category: 'This Month',
+        amount: monthlyTotal,
+        type: TransactionType.expense,
+        isCorrection: false,
+      ));
+    } catch (e) {
+      errorMessage = e.toString();
+    } finally {
+      isRoasting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Everything needed for a data export — currently just transactions,
+  /// but centralized here so the export screen has one call to make.
+  Future<List<TransactionModel>> exportData() => _db.fetchAllDataForExport();
+
+  /// Wipes all of the user's app data and signs them out. See
+  /// [SupabaseService.deleteAllUserData] for what this does and doesn't
+  /// cover (it does not remove the underlying Auth account/credentials).
+  Future<void> deleteAccount() async {
+    isSubmitting = true;
+    errorMessage = null;
+    notifyListeners();
+    try {
+      await _db.deleteAllUserData();
     } catch (e) {
       errorMessage = e.toString();
     } finally {
