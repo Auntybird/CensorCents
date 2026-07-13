@@ -4,7 +4,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/category_budget.dart';
-import '../services/biometric_service.dart';
 import '../services/wallet_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/add_transaction_sheet.dart'; // for kExpenseCategories
@@ -17,45 +16,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _appLockSupported = false;
-  bool _appLockEnabled = false;
-  bool _loadingAppLock = true;
   bool _exporting = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAppLockState();
-  }
-
-  Future<void> _loadAppLockState() async {
-    final supported = await BiometricService.instance.isDeviceSupported;
-    final enabled = await BiometricService.instance.isEnabled;
-    if (!mounted) return;
-    setState(() {
-      _appLockSupported = supported;
-      _appLockEnabled = enabled;
-      _loadingAppLock = false;
-    });
-  }
-
-  Future<void> _toggleAppLock(bool value) async {
-    if (value) {
-      final confirmed = await BiometricService.instance.authenticate();
-      if (!confirmed) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(BiometricService.instance.lastError ?? 'Could not verify identity.'),
-          ),
-        );
-        return;
-      }
-    }
-    await BiometricService.instance.setEnabled(value);
-    if (!mounted) return;
-    setState(() => _appLockEnabled = value);
-  }
 
   Future<void> _exportData() async {
     setState(() => _exporting = true);
@@ -246,35 +207,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   side: const BorderSide(color: AppColors.savingsGreen),
                 ),
               ),
-              const SizedBox(height: 32),
-              Text('App Lock', style: Theme.of(context).textTheme.headlineMedium),
-              const SizedBox(height: 4),
-              const Text(
-                'Require Face ID / fingerprint to open the app.',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-              ),
-              const SizedBox(height: 8),
-              if (_loadingAppLock)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: CircularProgressIndicator(color: AppColors.savingsGreen),
-                )
-              else if (!_appLockSupported)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Biometrics aren\'t available on this device.',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                )
-              else
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Require unlock on open', style: TextStyle(color: AppColors.textPrimary)),
-                  value: _appLockEnabled,
-                  activeThumbColor: AppColors.savingsGreen,
-                  onChanged: _toggleAppLock,
-                ),
               const SizedBox(height: 32),
               Text('Your Data', style: Theme.of(context).textTheme.headlineMedium),
               const SizedBox(height: 12),
