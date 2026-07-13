@@ -1,10 +1,10 @@
-name: CensorCents
+name: censorcents
 description: "CensorCents — a gamified budgeting app with an AI 'strict Asian parent' accountability partner."
 publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '^3.10.0'
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -25,8 +25,8 @@ dependencies:
   # --- UI polish ---
   intl: ^0.20.3
   cupertino_icons: ^1.0.8
-  local_auth: ^3.0.2
-  shared_preferences: ^2.5.5
+  share_plus: ^13.2.0
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:
@@ -38,11 +38,6 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  web:
-    generate: true
-    image_path: "assets/icon/app_icon.png"
-    background_color: "#FFFFFF"
-    theme_color: "#FFFFFF"
   image_path: "assets/icon/app_icon.png"
   adaptive_icon_background: "#FFFFFF"
   adaptive_icon_foreground: "assets/icon/app_icon.png"
