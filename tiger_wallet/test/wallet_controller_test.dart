@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:CensorCents/models/transaction_model.dart';
-import 'package:CensorCents/services/wallet_controller.dart';
+import 'package:censorcents/models/transaction_model.dart';
+import 'package:censorcents/services/wallet_controller.dart';
 
 void main() {
   test('WalletController starts with an empty, idle state', () {

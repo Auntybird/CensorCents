@@ -1,4 +1,4 @@
-package com.example.tiger_wallet
+package com.example.censorcents
 
 import io.flutter.embedding.android.FlutterActivity
 

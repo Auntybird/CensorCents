@@ -1,4 +1,4 @@
-name: CensorCents
+name: censorcents
 description: "CensorCents — a gamified budgeting app with an AI 'strict Asian parent' accountability partner."
 publish_to: "none"
 version: 1.0.0+1

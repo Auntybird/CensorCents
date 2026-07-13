@@ -292,7 +292,7 @@ class _HomePage extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 24),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.overspendRed.withValues(alpha: 0.1),
+                color: AppColors.overspendRed.withOpacity(0.1),
                 border: Border.all(color: AppColors.overspendRed, width: 1.5),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -435,15 +435,10 @@ class _TransactionsPage extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(
+              IconButton(
+                icon: const Icon(Icons.add_circle_outline, color: AppColors.savingsGreen),
+                tooltip: 'Add transaction',
                 onPressed: controller.isSubmitting ? null : onAddTransaction,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.savingsGreen,
-                  side: const BorderSide(color: AppColors.savingsGreen),
-                ),
               ),
             ],
           ),

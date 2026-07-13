@@ -413,6 +413,13 @@ class WalletController extends ChangeNotifier {
 
       await _db.deleteTransaction(transaction.id);
 
+      // Remove locally right away rather than waiting for the Realtime
+      // stream to push the removal — DELETE events over Realtime need
+      // REPLICA IDENTITY FULL to pass RLS (the default only includes the
+      // primary key in the old row, which isn't enough to check user_id),
+      // so don't depend on that round-trip for the UI to feel responsive.
+      transactions = transactions.where((t) => t.id != transaction.id).toList();
+
       monthlyTotal = await _db.fetchCurrentMonthTotal();
       monthlyIncome = await _db.fetchCurrentMonthIncome();
 
